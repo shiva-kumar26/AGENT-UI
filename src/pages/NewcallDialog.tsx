@@ -1,4 +1,4 @@
-import React, { useState, useContext } from "react";
+import React, { useState, useContext, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -7,21 +7,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Phone, ArrowLeft, X } from "lucide-react";
+import { Phone, ArrowLeft, X, Minus } from "lucide-react";
 import { CallContext } from "../components/calls/CallProvider";
-
+ 
 interface NewCallDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
-
+ 
 export default function NewCallDialog({
   open,
   onOpenChange,
 }: NewCallDialogProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [isMinimized, setIsMinimized] = useState(false);
   const { startCall } = useContext(CallContext);
-
+ 
+  useEffect(() => {
+    if (!open) setIsMinimized(false);
+  }, [open]);
+ 
   const dialPadNumbers = [
     { num: "1", letters: "" },
     { num: "2", letters: "ABC" },
@@ -36,18 +41,18 @@ export default function NewCallDialog({
     { num: "0", letters: "" },
     { num: "#", letters: "" },
   ];
-
+ 
   const quickDialContacts = [
     { name: "Support Line", number: "+1-800-555-0123" },
     { name: "Sales Team", number: "+1-800-555-0456" },
   ];
-
+ 
   const handleNumberClick = (num: string) =>
     setPhoneNumber((prev) => prev + num);
   const handleClear = () => setPhoneNumber("");
   const handleBackspace = () => setPhoneNumber((prev) => prev.slice(0, -1));
   const handleQuickDial = (number: string) => setPhoneNumber(number);
-
+ 
   const handleCall = () => {
     if (phoneNumber) {
       // Start outbound call with active state immediately
@@ -59,20 +64,40 @@ export default function NewCallDialog({
         },
         "ringing"
       );
-
+ 
       // Close dialog and reset form
       onOpenChange(false);
       setPhoneNumber("");
     }
   };
-
+ 
+  const handleMinimize = () => {
+    setIsMinimized(true);
+  };
+ 
   const handleClose = () => {
     onOpenChange(false);
     setPhoneNumber(""); // Reset form when closing
+    setIsMinimized(false);
   };
-
+ 
+  if (!open) return null;
+ 
+  if (isMinimized) {
+    return (
+      <div className="fixed bottom-5 left-5 z-50">
+        <Button
+          onClick={() => setIsMinimized(false)}
+          className="rounded-full w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white shadow-lg flex items-center justify-center"
+        >
+          <Phone className="w-6 h-6" />
+        </Button>
+      </div>
+    );
+  }
+ 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog open={open} onOpenChange={handleMinimize}>
       <DialogContent className="sm:max-w-md max-h-[70vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
@@ -80,12 +105,17 @@ export default function NewCallDialog({
               <Phone className="w-5 h-5 text-blue-600" />
               Make Call
             </DialogTitle>
-            <Button variant="ghost" size="icon" onClick={handleClose}>
-              <X className="w-4 h-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="icon" onClick={() => setIsMinimized(true)} title="Minimize">
+                <Minus className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={handleClose} title="Close">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         </DialogHeader>
-
+ 
         <div className="space-y-6">
           <div className="text-center">
             <Input
@@ -95,7 +125,7 @@ export default function NewCallDialog({
               className="text-center text-lg h-12 border-2"
             />
           </div>
-
+ 
           <div className="grid grid-cols-3 gap-4">
             {dialPadNumbers.map((item) => (
               <Button
@@ -113,7 +143,7 @@ export default function NewCallDialog({
               </Button>
             ))}
           </div>
-
+ 
           <div className="flex justify-center gap-4">
             <Button
               variant="outline"
@@ -122,7 +152,7 @@ export default function NewCallDialog({
             >
               <ArrowLeft className="w-4 h-4" />
             </Button>
-
+ 
             <Button
               onClick={handleCall}
               disabled={!phoneNumber}
@@ -131,7 +161,7 @@ export default function NewCallDialog({
               <Phone className="w-4 h-4 mr-2" />
               Call
             </Button>
-
+ 
             <Button
               variant="outline"
               onClick={handleClear}
@@ -140,7 +170,7 @@ export default function NewCallDialog({
               Clear
             </Button>
           </div>
-
+ 
           <div className="space-y-3">
             <h3 className="font-semibold text-gray-900">Quick Dial</h3>
             {quickDialContacts.map((contact, index) => (
@@ -162,3 +192,5 @@ export default function NewCallDialog({
     </Dialog>
   );
 }
+ 
+ 

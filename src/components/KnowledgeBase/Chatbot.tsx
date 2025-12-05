@@ -4,11 +4,11 @@ import {
   MessageSquare, Upload, X, FileText, Phone, Send as SendIcon,
   Book, ClipboardList, MapPin, Clock, Lightbulb,
   Scale, List, Info, AlertCircle, Briefcase, Activity,
-  Code, BarChart, Target
+  Code, BarChart, Target, Minus
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
-
+ 
 interface Message {
   id: number;
   text: string;
@@ -18,14 +18,14 @@ interface Message {
   relevantDocs?: number;
   processingTime?: number;
 }
-
+ 
 interface FilePreview {
   file: File;
   preview?: string;
   type: 'image' | 'document';
 }
-
-const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+ 
+const Chatbot: React.FC<{ onClose: () => void; onMinimize: () => void }> = ({ onClose, onMinimize }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<FilePreview[]>([]);
@@ -33,7 +33,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
-
+ 
   /* ---------- Icon map (matches backend intros) ---------- */
   const iconMap: Record<string, React.ReactNode> = {
     'Definition:': <Book className="w-4 h-4" />,
@@ -46,7 +46,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     'Based on your documents:': <Info className="w-4 h-4" />,
     'I couldn\'t find': <AlertCircle className="w-4 h-4" />
   };
-
+ 
   /* ---------- Inline bold parser helper ---------- */
   const parseInlineBold = (text: string): React.ReactNode => {
     const parts = text.split(/(\*\*.*?\*\*)/g);
@@ -57,7 +57,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       return part;
     });
   };
-
+ 
   /* ---------- Welcome messages ---------- */
   useEffect(() => {
     const welcome1: Message = {
@@ -72,12 +72,12 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     };
     setMessages([welcome1, welcome2]);
   }, []);
-
+ 
   /* ---------- Auto-scroll ---------- */
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
+ 
   /* ---------- File handling ---------- */
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -101,20 +101,20 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     });
     e.target.value = '';
   };
-
+ 
   const removeFile = (i: number) => setSelectedFiles(p => p.filter((_, idx) => idx !== i));
-
+ 
   /* ---------- Quick buttons ---------- */
   const handleQuick = (label: string) => {
     const txt = label === 'Contact Us' ? 'How can I contact Zenius?' : `Tell me about ${label}`;
     setInput(txt);
     setTimeout(handleSendMessage, 80);
   };
-
+ 
   /* ---------- Send message ---------- */
   const handleSendMessage = async () => {
     if (!input.trim() && selectedFiles.length === 0) return;
-
+ 
     const userMsg: Message = {
       id: Date.now(),
       text: input || '(Files attached)',
@@ -124,22 +124,22 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     setMessages(p => [...p, userMsg]);
     setInput('');
     setSelectedFiles([]);
-
+ 
     await sendToBackend(userMsg);
   };
-
+ 
   const sendToBackend = async (userMsg: Message) => {
     setIsLoading(true);
     try {
       const fd = new FormData();
       fd.append('message', userMsg.text);
       userMsg.files?.forEach(f => fd.append('files', f.file));
-
+ 
       const res = await kbApi.post('/chat', fd, {
         timeout: 60000,
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-
+ 
       const botMsg: Message = {
         id: Date.now() + 1,
         text: res.data.response,
@@ -149,7 +149,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         processingTime: res.data.processing_time_ms
       };
       setMessages(p => [...p, botMsg]);
-
+ 
       if (res.data.uploaded_files > 0) {
         queryClient.invalidateQueries({ queryKey: ['documents'] });
         toast({ title: 'Files Uploaded', description: `${res.data.uploaded_files} file(s) added` });
@@ -166,25 +166,25 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       setIsLoading(false);
     }
   };
-
+ 
   /* ---------- ENHANCED RESPONSE PARSER ---------- */
   const formatBotMessage = (raw: string) => {
     const lines = raw.split('\n');
     const elements: React.ReactNode[] = [];
-
+ 
     let inList = false;
     let listType: 'bullet' | 'numbered' | null = null;
-
+ 
     lines.forEach((line, idx) => {
       const trimmed = line.trim();
-
+ 
       // Empty line → paragraph break
       if (!trimmed) {
         inList = false;
         elements.push(<div key={idx} className="h-2" />);
         return;
       }
-
+ 
       // ---------- Main Heading with ** and emoji ----------
       const boldHeading = trimmed.match(/^([👋💼🏥📞🤖💻📊🎯🔧⚡🌟✨🚀📈💡🛠️🔍📋]?)\s*\*\*(.*?)\*\*:?\s*(.*)/);
       if (boldHeading) {
@@ -209,7 +209,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         inList = false;
         return;
       }
-
+ 
       // ---------- Subheading with emoji or icon ----------
       const iconMatch = Object.entries(iconMap).find(([key]) => trimmed.startsWith(key));
       if (iconMatch) {
@@ -224,25 +224,25 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         inList = false;
         return;
       }
-
+ 
       // ---------- Bullet with • (colored dot) ----------
       const bullet = trimmed.match(/^[•\-\*]\s+(.*)/);
-      
+ 
       // ---------- Numbered list 1. 2. 3. ----------
       const num = trimmed.match(/^(\d+)\.\s+(.*)/);
-
+ 
       if (bullet || num) {
         const isNumbered = !!num;
         const rawContent = bullet ? bullet[1] : num![2];
         const parsedContent = parseInlineBold(rawContent); // Apply inline bold parsing to content
-        
+ 
         const listKey = `${idx}-${isNumbered ? 'num' : 'bullet'}`;
-
+ 
         if (!inList || listType !== (isNumbered ? 'numbered' : 'bullet')) {
           inList = true;
           listType = isNumbered ? 'numbered' : 'bullet';
         }
-
+ 
         if (isNumbered) {
           // Numbered list with gradient badge
           elements.push(
@@ -264,7 +264,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         }
         return;
       }
-
+ 
       // ---------- Sources line ----------
       if (trimmed.startsWith('Sources:') || trimmed.startsWith('*Source:')) {
         const rest = trimmed.replace(/^\*?Sources?:\s*/, '').replace(/\*$/, '');
@@ -276,7 +276,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         inList = false;
         return;
       }
-
+ 
       // ---------- Inline bold **text** ----------
       const hasBold = trimmed.includes('**');
       if (hasBold) {
@@ -289,7 +289,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         inList = false;
         return;
       }
-
+ 
       // ---------- Sub-item bullet: Detect "Heading: description" and render as inline bold bullet ----------
       const subItemMatch = trimmed.match(/^([A-Z][a-zA-Z\s&]+):\s*(.*)/);
       if (subItemMatch) {
@@ -307,15 +307,15 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         listType = 'bullet';
         return;
       }
-
+ 
       // ---------- Default paragraph ----------
       inList = false;
       elements.push(<p key={idx} className="mt-1 text-gray-800 leading-relaxed">{trimmed}</p>);
     });
-
+ 
     return <div className="leading-relaxed">{elements}</div>;
   };
-
+ 
   /* ---------- Render ---------- */
   return (
     <div className="fixed bottom-4 right-4 w-96 h-[600px] bg-white rounded-xl shadow-2xl border border-gray-300 flex flex-col overflow-hidden z-50">
@@ -327,11 +327,16 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </div>
           <span className="font-semibold text-lg">Zenius Assistant</span>
         </div>
-        <button onClick={onClose} className="p-1 rounded-full hover:bg-white/20 transition">
-          <X className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={onMinimize} className="p-1 rounded-full hover:bg-white/20 transition" title="Minimize">
+            <Minus className="w-5 h-5" />
+          </button>
+          <button onClick={onClose} className="p-1 rounded-full hover:bg-white/20 transition" title="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       </div>
-
+ 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
         {messages.map(m => (
@@ -348,21 +353,21 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 <div className="mb-3 space-y-2">
                   {m.files.map((f, i) => f.type === 'image' && f.preview ? (
                     <img key={i} src={f.preview} alt={f.file.name}
-                         className="max-w-full h-32 object-cover rounded-lg"/>
+                      className="max-w-full h-32 object-cover rounded-lg" />
                   ) : (
                     <div key={i} className="flex items-center gap-2 p-2 bg-gray-100 rounded-lg text-xs">
-                      <FileText className="w-4 h-4 text-gray-600"/>
+                      <FileText className="w-4 h-4 text-gray-600" />
                       <span className="truncate">{f.file.name}</span>
                     </div>
                   ))}
                 </div>
               ) : null}
-
+ 
               {/* Message text */}
               {m.sender === 'bot' ? formatBotMessage(m.text) : (
                 <div className="whitespace-pre-wrap">{m.text}</div>
               )}
-
+ 
               {/* Meta */}
               {m.sender === 'bot' && m.confidence !== undefined && (
                 <div className="mt-3 pt-2 border-t border-gray-300 text-xs opacity-70">
@@ -378,12 +383,12 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             </div>
           </div>
         ))}
-
+ 
         {isLoading && (
           <div className="flex justify-start">
             <div className="bg-white px-4 py-3 rounded-2xl shadow-sm border border-gray-200">
               <div className="flex items-center gap-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"/>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
                 <span className="text-sm text-gray-600">Thinking…</span>
               </div>
             </div>
@@ -391,7 +396,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         )}
         <div ref={messagesEndRef} />
       </div>
-
+ 
       {/* Quick buttons */}
       <div className="px-4 py-2 flex flex-wrap gap-2 bg-white border-t border-gray-100">
         {['Our Services', 'HealthAI', 'VoiceIQ', 'Contact Us'].map(l => (
@@ -404,7 +409,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </button>
         ))}
       </div>
-
+ 
       {/* Selected files preview */}
       {selectedFiles.length > 0 && (
         <div className="px-4 pb-2 max-h-24 overflow-y-auto flex flex-wrap gap-2 bg-white">
@@ -412,20 +417,20 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <div key={i} className="relative group">
               {f.type === 'image' && f.preview ? (
                 <div className="relative">
-                  <img src={f.preview} alt="" className="w-16 h-16 object-cover rounded-lg border"/>
+                  <img src={f.preview} alt="" className="w-16 h-16 object-cover rounded-lg border" />
                   <button
                     onClick={() => removeFile(i)}
                     className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 opacity-0 group-hover:opacity-100 transition flex items-center justify-center"
                   >
-                    <X className="w-3 h-3"/>
+                    <X className="w-3 h-3" />
                   </button>
                 </div>
               ) : (
                 <div className="flex items-center gap-1 px-2 py-1 bg-gray-100 rounded-lg text-xs">
-                  <FileText className="w-3 h-3"/>
+                  <FileText className="w-3 h-3" />
                   <span className="truncate max-w-20">{f.file.name}</span>
                   <button onClick={() => removeFile(i)} className="text-red-500">
-                    <X className="w-3 h-3"/>
+                    <X className="w-3 h-3" />
                   </button>
                 </div>
               )}
@@ -433,7 +438,7 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           ))}
         </div>
       )}
-
+ 
       {/* Input + send */}
       <div className="p-3 bg-white border-t border-gray-200">
         <div className="flex gap-2 items-center">
@@ -450,9 +455,9 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             htmlFor="zenius-file"
             className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 cursor-pointer transition"
           >
-            <Upload className="w-5 h-5 text-gray-600"/>
+            <Upload className="w-5 h-5 text-gray-600" />
           </label>
-
+ 
           <input
             type="text"
             value={input}
@@ -462,20 +467,20 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             disabled={isLoading}
           />
-
+ 
           <button
             onClick={handleSendMessage}
             disabled={isLoading || (!input.trim() && selectedFiles.length === 0)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed transition flex items-center gap-1"
           >
-            <SendIcon className="w-5 h-5"/>
+            <SendIcon className="w-5 h-5" />
           </button>
         </div>
-
+ 
         {/* Contact numbers */}
         <div className="mt-3 flex items-center justify-center gap-4 text-xs text-gray-500">
           <div className="flex items-center gap-1">
-            <Phone className="w-3 h-3"/>
+            <Phone className="w-3 h-3" />
             <span>Call us:</span>
           </div>
           <a href="tel:+14084574613" className="hover:text-blue-600 transition">+1 408 457 4613</a>
@@ -486,5 +491,6 @@ const Chatbot: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     </div>
   );
 };
-
+ 
 export default Chatbot;
+ 

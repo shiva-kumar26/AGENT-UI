@@ -18,7 +18,7 @@ import { backendConfig } from "@/config/config";
 import axios from "axios";
 import { AuthContext } from "@/store/AuthContext";
 import { WebSocketEventContext } from "@/store/WebSocketEventContext";
-import AlertSystem from '../components/AlertSystem';
+import AlertSystem from '../components/ui/AlertSystem';
 
 
 

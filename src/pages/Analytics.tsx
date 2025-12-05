@@ -823,13 +823,13 @@ export default function AnalyticsPage() {
       try {
         // Attempt to fetch a small batch of login-logout records (IDs 1..50)
         // Adjust if your backend has a dedicated listing endpoint - replace accordingly
-     const baseURL = `${backendConfig.baseURL}/login/login-logout`;
-const fetches = [];
-for (let id = 200; id <= 1000; id++) {
-  fetches.push(axios.get(`${baseURL}/${id}`).catch(() => null));
-}
-const results = await Promise.all(fetches);
-const valid = results.map((r) => r && r.data).filter(Boolean) as any[];
+        const baseURL = `${backendConfig.baseURL}/login/login-logout`;
+        const fetches = [];
+        for (let id = 200; id <= 1000; id++) {
+        fetches.push(axios.get(`${baseURL}/${id}`).catch(() => null));
+        }
+        const results = await Promise.all(fetches);
+        const valid = results.map((r) => r && r.data).filter(Boolean) as any[];
 
         valid.forEach((entry) => {
           // entry.agent_name, entry.duration (HH:MM:SS), entry.login_timestamp, entry.logout_timestamp
