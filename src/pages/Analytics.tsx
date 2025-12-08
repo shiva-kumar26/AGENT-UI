@@ -766,6 +766,8 @@ export default function AnalyticsPage() {
         axios.get(`${backendConfig.baseURL}/api/directory_search`),
       ]);
 
+      console.log(`Interaction API: ${backendConfig.baseURL}${backendConfig.callInteractions}`)
+
       const interactions: Interaction[] = interactionsRes.data || [];
       const directoryData = dirRes.data || [];
 
@@ -773,6 +775,7 @@ export default function AnalyticsPage() {
       const agentInteractions = interactions.filter(
         (i) => i.caller === auth?.userId || i.callee === auth?.userId
       );
+      console.log(agentInteractions)
 
       // compute date range (local)
       const now = new Date();
@@ -814,63 +817,66 @@ export default function AnalyticsPage() {
       const compPercent = filteredAgent.length > 0 ? (completedCalls / filteredAgent.length) * 100 : 0;
       setCompletedRate(Number(compPercent.toFixed(1)));
 
-      // --- Average Duration calculation
-      // Primary source: login/logout entries endpoint (/login/login-logout/:id)
-      // We'll fetch some recent entries (limited). If none match, fallback to per-call durations.
-      let loginDurationsSec: number[] = [];
-      const dailyLoginDurations: Record<string, number[]> = {};
+      // --- Average Duration calculation from CDR API
+      const dailyCallDurations: Record<string, number[]> = {};
+      const callDurationsSec: number[] = [];
 
       try {
-        // Attempt to fetch a small batch of login-logout records (IDs 1..50)
-        // Adjust if your backend has a dedicated listing endpoint - replace accordingly
-        const baseURL = `${backendConfig.baseURL}/login/login-logout`;
-        const fetches = [];
-        for (let id = 200; id <= 1000; id++) {
-        fetches.push(axios.get(`${baseURL}/${id}`).catch(() => null));
-        }
-        const results = await Promise.all(fetches);
-        const valid = results.map((r) => r && r.data).filter(Boolean) as any[];
+        console.log("=== Fetching CDR Reports for Call Duration ===");
 
-        valid.forEach((entry) => {
-          // entry.agent_name, entry.duration (HH:MM:SS), entry.login_timestamp, entry.logout_timestamp
-          if (
-            entry?.agent_name &&
-            auth?.userName &&
-            entry.agent_name.toLowerCase() === auth.userName.toLowerCase() &&
-            entry.duration
-          ) {
-            const logoutTime = entry.logout_timestamp ? new Date(entry.logout_timestamp) : new Date(entry.login_timestamp);
-            if (logoutTime >= start && logoutTime <= now) {
-              const [h, m, s] = (entry.duration || "0:0:0").split(":").map((v: string) => parseFloat(v || "0"));
-              const sec = (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
-              loginDurationsSec.push(sec);
-              const key = formatLocalISO(logoutTime);
-              if (!dailyLoginDurations[key]) dailyLoginDurations[key] = [];
-              dailyLoginDurations[key].push(sec);
+        // Fetch CDR reports
+        const cdrRes = await axios.get("http://10.16.7.96:8001/cdr-reports/all");
+        // API returns { status: "success", data: [...] }
+        const cdrReports = cdrRes.data?.data || [];
+
+        console.log("Total CDR records fetched:", cdrReports.length);
+        console.log("Sample CDR record:", cdrReports[0]);
+
+        // Filter CDR records for current agent and date range
+        const agentCDRs = cdrReports.filter((record: any) => {
+          // Check if agent is involved (as caller_id or destination_number)
+          const isAgentCall =
+            record.caller_id === auth?.userId ||
+            record.destination_number === auth?.userId ||
+            record.name === auth?.userId;
+
+          if (!isAgentCall) return false;
+
+          // Check date range using start_time
+          if (record.start_time) {
+            const callDate = new Date(record.start_time);
+            return callDate >= start && callDate <= now;
+          }
+          return false;
+        });
+
+        console.log("Agent CDR records in range:", agentCDRs.length);
+
+        // Extract billsec (call duration in seconds) from filtered records
+        agentCDRs.forEach((record: any) => {
+          const billsec = record.billsec;
+
+          if (billsec && billsec > 0) {
+            callDurationsSec.push(billsec);
+
+            // Group by date for daily averages
+            if (record.start_time) {
+              const key = formatLocalISO(new Date(record.start_time));
+              if (!dailyCallDurations[key]) dailyCallDurations[key] = [];
+              dailyCallDurations[key].push(billsec);
             }
           }
         });
+
+        console.log("Calls with valid billsec:", callDurationsSec.length);
+        console.log("Duration values (seconds):", callDurationsSec.slice(0, 5));
       } catch (err) {
-        // ignore and fallback
-        console.warn("login-logout fetch failed or absent, will fallback to call durations if available", err);
+        console.error("Error fetching CDR reports:", err);
+        // Continue with empty data if API fails
       }
 
-      // Fallback: if loginDurationsSec empty, use call durations (from filteredAgent)
-      const dailyCallDurations: Record<string, number[]> = {};
-      const callDurationsSec: number[] = [];
-      filteredAgent.forEach((i) => {
-        if (i.duration && i.duration > 0) {
-          callDurationsSec.push(i.duration);
-          const key = formatLocalISO(new Date(i.created_date));
-          if (!dailyCallDurations[key]) dailyCallDurations[key] = [];
-          dailyCallDurations[key].push(i.duration);
-        }
-      });
-
-      // use loginDurations if available; else use call durations
-      const useLogin = loginDurationsSec.length > 0;
-      const masterDurations = useLogin ? loginDurationsSec : callDurationsSec;
-      const masterDaily = useLogin ? dailyLoginDurations : dailyCallDurations;
+      const masterDurations = callDurationsSec;
+      const masterDaily = dailyCallDurations;
 
       let avgSeconds = 0;
       if (masterDurations.length > 0) avgSeconds = masterDurations.reduce((a, b) => a + b, 0) / masterDurations.length;
@@ -1019,12 +1025,12 @@ export default function AnalyticsPage() {
 
           <Card>
             <CardHeader className="flex-row justify-between items-center pb-2">
-              <CardTitle className="text-sm font-medium">Average Duration</CardTitle>
+              <CardTitle className="text-sm font-medium">Average Call Duration</CardTitle>
               <Clock className="h-4 w-4 text-gray-500" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{avgDurationLabel}</div>
-              <p className="text-xs text-blue-500 mt-1">Between Login & Logout (fallback: calls)</p>
+              <p className="text-xs text-blue-500 mt-1">Average duration per call</p>
             </CardContent>
           </Card>
 
