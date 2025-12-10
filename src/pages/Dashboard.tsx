@@ -149,35 +149,30 @@ export default function DashboardPage() {
   const latestEvent = context?.latestEvent;
   const extension = auth?.userId;
   
-
-// ✅ FORCE LOGOUT DETECTOR (SESSION POLLING)
 useEffect(() => {
-  const interval = setInterval(async () => {
-    if (!auth?.userId) return;
+  const intervalId = setInterval(async () => {
+    const sessionId = localStorage.getItem("session_id");
+
+    if (!sessionId) return;
 
     try {
-      const res = await axios.get(
-        `${backendConfig.baseURL}/api/agent/${auth.userId}/status`
+      const response = await axios.post(
+        `${backendConfig.baseURL}/login/check-force-logout`,
+        { session_id: sessionId }
       );
 
-      // ✅ This triggers when SUPERVISOR force-logs out the agent
-      if (res.data.status === "OFFLINE") {
-        console.warn("⚠️ Force logout detected for agent:", auth.userId);
-
-        // ✅ Clear frontend session
+      if (response.data?.force_logout === true) {
         localStorage.clear();
-
-        // ✅ Hard redirect to login page
-        window.location.href = "/";
+        sessionStorage.clear();
+        window.location.replace("/login");
       }
-    } catch (err) {
-      console.error("Force logout status check failed");
+    } catch (error) {
+      console.error("Force logout check error:", error);
     }
-  }, 3000); // every 3 seconds
+  }, 3000);
 
-  return () => clearInterval(interval);
-}, [auth?.userId]);
-
+  return () => clearInterval(intervalId);
+}, []);
 
    // ✅ AUTO LOGOUT WHEN TAB / BROWSER IS CLOSED
 useEffect(() => {

@@ -73,6 +73,9 @@ export default function WelcomePage() {
           role = "agent",
           session_id,
         } = response.data;
+        // ✅ SAVE SESSION ID FOR POLLING & SECURITY
+        localStorage.setItem("session_id", session_id);
+
 
         if (!agentId) {
           setError("Agent extension not received from server.");
@@ -107,7 +110,7 @@ export default function WelcomePage() {
           role,
           userId: userId || agentId,
           extension: agentId,
-          // session_id,
+          session_id,
         });
 
         setTimeout(() => {

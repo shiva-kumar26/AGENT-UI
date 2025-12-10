@@ -158,7 +158,6 @@ export default function ActiveCallBar() {
     }
   }, [isEstablished]);
 
-  
   useEffect(() => {
     console.log("incomingSessions", incomingSessions);
     console.log("outgoingSessions", outgoingSessions);
@@ -227,12 +226,16 @@ export default function ActiveCallBar() {
 
   // *************************  Logout Handler  ********************
 const agentLogout = async () => {
-  console.log("🔄 Calling backend logout for:", auth?.userName);
+  const requestBody = {
+    user_id: auth?.userName,   // ✅ Must go in BODY
+  };
+
+  console.log("logout API Request Body", requestBody);
 
   try {
     const response = await axios.post(
-      `${backendConfig.baseURL}${backendConfig.logoutEndPoint}`,  // ← No query params!
-      { user_id: auth?.userName },  // ✅ JSON body with user_id
+      `${backendConfig.baseURL}${backendConfig.logoutEndPoint}`, // ✅ NO query params
+      requestBody,                                               // ✅ BODY goes here
       {
         headers: {
           "Content-Type": "application/json",
@@ -240,10 +243,11 @@ const agentLogout = async () => {
       }
     );
 
-    console.log("📊 Response status:", response.status);
+    console.log("logout API Response --> ", response);
 
     if (response.status === 200) {
-      console.log("✅ Backend logout success:", response.data);
+      console.log("Logout successful:", response.data);
+
       login({
         userId: "",
         userName: "",
@@ -252,14 +256,16 @@ const agentLogout = async () => {
         isAuthenticated: false,
         hostname: "",
       });
+
       agentUnRegister();
       logout();
       navigate(createPageUrl("Welcome"));
     }
   } catch (error: any) {
-    console.error("❌ Logout error:", error.response?.status, error.message);
+    console.log("logout API --> Error:", error?.response?.data || error.message);
   }
 };
+
 
 
   // *************************  Agent Registration  ********************
