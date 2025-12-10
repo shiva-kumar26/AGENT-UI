@@ -23,7 +23,10 @@ export default function WelcomePage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // Auto-clear error after 6 seconds
+  // ✅ FORCE LOGOUT STATES
+  const [showForcePopup, setShowForcePopup] = useState(false);
+  const [pendingLogin, setPendingLogin] = useState<{ username: string; password: string } | null>(null);
+
   useEffect(() => {
     if (error) {
       const timer = setTimeout(() => setError(""), 6000);
@@ -33,8 +36,6 @@ export default function WelcomePage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Prevent double submission
     if (isLoading) return;
 
     const cleanUsername = username.trim();
@@ -46,7 +47,7 @@ export default function WelcomePage() {
     }
 
     setIsLoading(true);
-    setError(""); // Clear previous errors on new attempt
+    setError("");
 
     try {
       const response = await axios.post(
@@ -55,6 +56,15 @@ export default function WelcomePage() {
         { headers: { "Content-Type": "application/json" } }
       );
 
+      // ✅ FORCE LOGOUT CHECK
+      if (response.data?.force_logout_required) {
+        setPendingLogin({ username: cleanUsername, password: cleanPassword });
+        setShowForcePopup(true);
+        setIsLoading(false);
+        return;
+      }
+
+      // ✅ NORMAL LOGIN FLOW (UNCHANGED)
       if (response.status === 200 && response.data.authenticated) {
         const {
           extension: agentId,
@@ -68,7 +78,6 @@ export default function WelcomePage() {
           return;
         }
 
-        // Non-blocking FreeSWITCH status update
         try {
           await axios.post(
             `${backendConfig.baseURL}${backendConfig.setAgentStatus}`,
@@ -79,11 +88,8 @@ export default function WelcomePage() {
             },
             { headers: { "Content-Type": "application/json" } }
           );
-        } catch (err) {
-          console.warn("FreeSWITCH status update failed (non-blocking)", err);
-        }
+        } catch {}
 
-        // Success: Update auth state
         login({
           userId: agentId,
           userName: userId || agentId,
@@ -102,27 +108,69 @@ export default function WelcomePage() {
           extension: agentId,
         });
 
-        // Critical Fix: Small delay ensures auth state is committed before navigation
         setTimeout(() => {
           navigate(createPageUrl("Dashboard"), { replace: true });
         }, 100);
-
       } else {
         setError("Invalid username or password.");
       }
     } catch (error: any) {
-      console.error("Login error:", error);
       setError(
         error.response?.data?.message ||
-          "Login failed. Please check your connection and try again."
+          "Already logged in. Please force logout or contact supervisor."
       );
     } finally {
       setIsLoading(false);
     }
   };
 
+  // ✅ FORCE LOGOUT HANDLER
+  const handleForceLogout = async () => {
+    if (!pendingLogin) return;
+
+    try {
+      await axios.post(`${backendConfig.baseURL}/login/force-logout`, {
+        agent_name: pendingLogin.username,
+      });
+
+      setUsername(pendingLogin.username);
+      setPassword(pendingLogin.password);
+      setShowForcePopup(false);
+
+      setTimeout(() => {
+        document.getElementById("login-btn")?.click();
+      }, 300);
+    } catch {
+      setError("Force logout failed. Try again.");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50 flex items-center justify-center p-4">
+
+      {/* ✅ FORCE LOGOUT POPUP */}
+      {showForcePopup && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-[350px] shadow-xl">
+            <h3 className="text-lg font-bold mb-3">Agent Already Logged In</h3>
+            <p className="text-sm mb-4">
+              This agent is already logged in. Do you want to force logout?
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowForcePopup(false)}
+              >
+                No
+              </Button>
+              <Button onClick={handleForceLogout}>
+                Yes, Force Logout
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="w-full max-w-md">
         <Card className="shadow-xl border-0 bg-white/80 backdrop-blur">
           <CardHeader className="text-center pb-4">
@@ -133,74 +181,34 @@ export default function WelcomePage() {
           </CardHeader>
 
           <CardContent>
-            <form onSubmit={handleLogin} className="space-y-6" noValidate>
+            <form onSubmit={handleLogin} className="space-y-6">
+
               {error && (
-                <Alert variant="destructive" className="animate-in fade-in slide-in-from-top-2 duration-300">
+                <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
 
               <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                  <Input
-                    id="username"
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Enter your username"
-                    className="pl-10 h-12"
-                    required
-                    autoFocus
-                    disabled={isLoading}
-                    autoComplete="username"
-                  />
-                </div>
+                <Label>Username</Label>
+                <Input value={username} onChange={(e) => setUsername(e.target.value)} />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter your password"
-                    className="pl-10 pr-12 h-12"
-                    required
-                    disabled={isLoading}
-                    autoComplete="current-password"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1 top-1/2 -translate-y-1/2"
-                    onClick={() => setShowPassword(!showPassword)}
-                    disabled={isLoading}
-                  >
-                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                  </Button>
-                </div>
+                <Label>Password</Label>
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <Button type="button" onClick={() => setShowPassword(!showPassword)}>
+                  {showPassword ? <EyeOff /> : <Eye />}
+                </Button>
               </div>
 
-              <Button
-                type="submit"
-                disabled={isLoading || !username.trim() || !password.trim()}
-                className="w-full h-12 text-lg font-semibold bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 transition-all"
-              >
-                {isLoading ? (
-                  "Signing in..."
-                ) : (
-                  <>
-                    <LogIn className="w-5 h-5 mr-2" />
-                    Sign In
-                  </>
-                )}
+              <Button id="login-btn" type="submit" disabled={isLoading}>
+                {isLoading ? "Signing in..." : "Sign In"}
               </Button>
             </form>
           </CardContent>
@@ -209,3 +217,7 @@ export default function WelcomePage() {
     </div>
   );
 }
+
+
+
+
