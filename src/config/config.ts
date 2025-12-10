@@ -50,6 +50,7 @@ export const backendConfig = {
   queueName: "/api/api/queue_tests/1",
   customers: "/api/customers/",
   callInteractions: "/api/interactions/",
+  cdrReports: "http://10.16.7.96:8001/cdr-reports/all",
   port: ":5050",
 };
 

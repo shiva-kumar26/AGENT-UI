@@ -4,6 +4,8 @@ import LayoutWrapper from "./layout/layout";
 import { WebSocketEventProvider } from "./store/WebSocketEventContext";
 import { AuthContext } from "../src/store/AuthContext";
 
+import { InteractionProvider } from "./store/InteractionContext";
+
 const App = () => {
   const { auth } = useContext(AuthContext);
 
@@ -17,9 +19,11 @@ const App = () => {
 
   return (
     <WebSocketEventProvider>
-      <LayoutWrapper>
-        <AppRoutes />
-      </LayoutWrapper>
+      <InteractionProvider>
+        <LayoutWrapper>
+          <AppRoutes />
+        </LayoutWrapper>
+      </InteractionProvider>
     </WebSocketEventProvider>
   );
 };
