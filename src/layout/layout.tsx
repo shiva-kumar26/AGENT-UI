@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
- 
+
 import { createPageUrl } from "@/utils/utils";
 import {
   LayoutDashboard,
@@ -15,7 +15,7 @@ import {
   UserCircle,
   Headset,
 } from "lucide-react";
- 
+
 import {
   Sidebar,
   SidebarContent,
@@ -47,11 +47,11 @@ import zeniusLogo from "@/images/zenius.png";
 import axios from "axios";
 import NewCallDialog from "@/pages/NewcallDialog";
 import Chatbot from "@/components/KnowledgeBase/Chatbot";
- 
+
 type LayoutContentProps = {
   children: ReactNode;
 };
- 
+
 const navigationItems = [
   {
     title: "Dashboard",
@@ -65,9 +65,9 @@ const navigationItems = [
   { title: "Analytics", url: createPageUrl("Analytics"), icon: BarChart3 },
   { title: "Agent Assist", url: createPageUrl("AgentAssists"), icon: Headset },
 ];
- 
+
 const agentStatuses = agentStatus;
- 
+
 function LayoutContent({ children }: LayoutContentProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -80,27 +80,27 @@ function LayoutContent({ children }: LayoutContentProps) {
   const [chatViewState, setChatViewState] = useState<'closed' | 'hidden' | 'visible'>('closed');
   const { callState, activeCallDetails } = useContext(CallContext);
   const { auth, setAuthField } = useContext(AuthContext);
- 
+
   // ✅ NEW: WebSocket context for real-time updates
   const context = useContext(WebSocketEventContext);
   const latestEvent = context?.latestEvent;
- 
+
   useEffect(() => {
     if (!auth?.isAuthenticated) {
       navigate(createPageUrl("Welcome"));
     }
   }, []);
- 
+
   useEffect(() => {
     if (auth) {
       setCurrentAgent(auth.userId);
       setAgentStatus(auth.status);
       setDisplayStatus(auth.status);
- 
+
       // ✅ NEW: Get agent name from auth context
       // Try different possible fields where name might be stored
       let name = "Agent";
- 
+
       if (auth?.user?.first_name && auth?.user?.last_name) {
         name = `${auth.user.first_name} ${auth.user.last_name}`;
       } else if (auth?.fullName) {
@@ -110,12 +110,12 @@ function LayoutContent({ children }: LayoutContentProps) {
       } else if (auth?.first_name && auth?.last_name) {
         name = `${auth.first_name} ${auth.last_name}`;
       }
- 
+
       setCurrentAgentName(name);
       console.log("[Layout] Agent name set to:", name);
     }
   }, [auth]);
- 
+
   // Automatically switch to "On Call" during active calls
   useEffect(() => {
     if (callState === "active" || callState === "connecting" || callState === "ringing") {
@@ -127,11 +127,11 @@ function LayoutContent({ children }: LayoutContentProps) {
       setDisplayStatus(previousStatus || "Available");
     }
   }, [callState]);
- 
+
   // ✅ NEW: Listen for WebSocket status changes (INSTANT UPDATES)
   useEffect(() => {
     if (!latestEvent) return;
- 
+
     const {
       Event,
       EventType,
@@ -140,16 +140,16 @@ function LayoutContent({ children }: LayoutContentProps) {
       Username,
       CallEvent,
     } = latestEvent;
- 
+
     // Check if this WebSocket event is for the CURRENT agent
     const isCurrentAgent =
       Agent?.includes(auth?.userId) ||
       Username === auth?.userId;
- 
+
     if (!isCurrentAgent) return;
- 
+
     console.log(`[Layout] WebSocket Event: ${Event}`, latestEvent);
- 
+
     // Update status based on event type
     if (Event === "Register") {
       console.log(`[Layout] ✅ Agent registered: Available`);
@@ -184,7 +184,7 @@ function LayoutContent({ children }: LayoutContentProps) {
       }
     }
   }, [latestEvent, auth?.userId, callState, agentStatus]);
- 
+
   // ✅ NEW: Poll real-time API every 2 seconds (FALLBACK + CONFIRMATION)
   useEffect(() => {
     const refreshAgentStatus = async () => {
@@ -192,19 +192,26 @@ function LayoutContent({ children }: LayoutContentProps) {
         const response = await axios.get(
           "http://10.16.7.91:5001/realtime_agents"
         );
- 
+
         // Find the current agent in the list
         const currentAgent = response.data?.find(
           (agent: any) => agent.Extension === auth?.userId
         );
- 
+
         if (currentAgent?.status && callState === "idle") {
           console.log(
             `[Layout] 🔄 Real-time API status: ${currentAgent.status}`
           );
- 
+
           // Only update if status actually changed
           if (currentAgent.status !== agentStatus) {
+            // ✅ FIX: Ignore "Logged Out" from polling to prevent stale data from forcing logout
+            // The polling API might lag behind the actual login session
+            if (currentAgent.status === "Logged Out" && agentStatus !== "Logged Out") {
+              console.warn("[Layout] Ignoring 'Logged Out' from polling (potential stale state)");
+              return;
+            }
+
             setAgentStatus(currentAgent.status);
             setDisplayStatus(currentAgent.status);
             setAuthField("status", currentAgent.status);
@@ -214,31 +221,31 @@ function LayoutContent({ children }: LayoutContentProps) {
         console.error("[Layout] ❌ Failed to fetch real-time status:", error);
       }
     };
- 
+
     // Call immediately on mount
     refreshAgentStatus();
- 
+
     // Then call every 2 seconds
     const interval = setInterval(refreshAgentStatus, 2000);
- 
+
     return () => clearInterval(interval);
   }, [auth?.userId, callState, agentStatus]);
- 
+
   const handleStatusChange = async (status: string) => {
     if (callState !== "idle") {
       console.log("Status change ignored: agent currently On Call");
       return;
     }
- 
+
     const requestBody = { agent: auth.userId, status };
- 
+
     try {
       const response = await axios.post(
         `${backendConfig.baseURL}${backendConfig.port}${backendConfig.setAgentStatus}`,
         requestBody,
         { headers: { "Content-Type": "application/json" } }
       );
- 
+
       if (response.status === 200) {
         setAgentStatus(status);
         setDisplayStatus(status);
@@ -248,7 +255,7 @@ function LayoutContent({ children }: LayoutContentProps) {
       console.log("Set Agent Status API --> Error:", error);
     }
   };
- 
+
   const getStatusColor = (status: string): string => {
     switch (status) {
       case "Available":
@@ -265,9 +272,9 @@ function LayoutContent({ children }: LayoutContentProps) {
         return "bg-gray-500";
     }
   };
- 
+
   if (location.pathname === createPageUrl("Welcome")) return <>{children}</>;
- 
+
   return (
     <TooltipProvider>
       <SidebarProvider>
@@ -279,7 +286,7 @@ function LayoutContent({ children }: LayoutContentProps) {
                 <img src={zeniusLogo} alt="Zenius" className="w-18 h-12 mx-auto" />
               </div>
             </SidebarHeader>
- 
+
             <SidebarContent className="p-1">
               {/* Menu items */}
               <SidebarGroup>
@@ -302,7 +309,7 @@ function LayoutContent({ children }: LayoutContentProps) {
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
- 
+
               {/* Quick actions */}
               <SidebarGroup className="mt-1">
                 <SidebarGroupContent>
@@ -318,14 +325,14 @@ function LayoutContent({ children }: LayoutContentProps) {
                       <Phone className="w-4 h-4 mr-2" />
                       <p>New Call</p>
                     </Button>
- 
+
                     <Link to={createPageUrl("ComposeEmail")}>
                       <Button className="w-full justify-start bg-white-600 hover:bg-blue-50 hover:text-blue-700 text-gray">
                         <Mail className="w-4 h-4 mr-2" />
                         <p>Compose Email</p>
                       </Button>
                     </Link>
- 
+
                     <Link to={createPageUrl("StartChat")}>
                       <Button className="w-full justify-start bg-white-600 hover:bg-blue-50 hover:text-blue-700 text-gray">
                         <MessageCircle className="w-4 h-4 mr-2" />
@@ -336,7 +343,7 @@ function LayoutContent({ children }: LayoutContentProps) {
                 </SidebarGroupContent>
               </SidebarGroup>
             </SidebarContent>
- 
+
             {/* Footer - Agent Status Section */}
             <SidebarFooter className="border-t border-gray-100 p-4">
               <div className="space-y-4">
@@ -364,7 +371,7 @@ function LayoutContent({ children }: LayoutContentProps) {
                     </p>
                   </div>
                 </div>
- 
+
                 {/* ✅ Status Dropdown - NOW UPDATES IN REAL-TIME */}
                 <div className="space-y-2">
                   <Select
@@ -404,7 +411,7 @@ function LayoutContent({ children }: LayoutContentProps) {
               </div>
             </SidebarFooter>
           </Sidebar>
- 
+
           {/* Main content */}
           <main className="flex-1 flex flex-col">
             <header className="bg-white border-b border-gray-200 px-6 py-4 md:hidden">
@@ -413,14 +420,14 @@ function LayoutContent({ children }: LayoutContentProps) {
                 <h1 className="text-xl font-semibold">CallCenter Pro</h1>
               </div>
             </header>
- 
+
             <div className="relative flex-1">
               <div className="pt-[70px]">
                 <ActiveCallBar />
               </div>
               <div>{children}</div>
             </div>
- 
+
             {/* Global Chatbot Button */}
             <Button
               onClick={() => {
@@ -431,7 +438,7 @@ function LayoutContent({ children }: LayoutContentProps) {
             >
               <MessageSquare className="w-6 h-6" />
             </Button>
- 
+
             {/* Global Chatbot Component */}
             {chatViewState !== 'closed' && (
               <div style={{ display: chatViewState === 'hidden' ? 'none' : 'block' }}>
@@ -443,13 +450,13 @@ function LayoutContent({ children }: LayoutContentProps) {
             )}
           </main>
         </div>
- 
+
         <NewCallDialog open={newCallDialogOpen} onOpenChange={setNewCallDialogOpen} />
       </SidebarProvider>
     </TooltipProvider>
   );
 }
- 
+
 export default function LayoutWrapper({ children }: LayoutContentProps) {
   return (
     <CallProvider>
@@ -457,4 +464,3 @@ export default function LayoutWrapper({ children }: LayoutContentProps) {
     </CallProvider>
   );
 }
- 

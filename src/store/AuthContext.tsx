@@ -11,6 +11,14 @@ interface AuthType {
   hostname?: string;
   role?: string;
   extension?: string;
+  fullName?: string;
+  first_name?: string;
+  last_name?: string;
+  user?: {
+    first_name?: string;
+    last_name?: string;
+    [key: string]: any;
+  };
 }
 
 interface AuthContextType {
@@ -27,7 +35,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [auth, setAuth] = useLocalStorageState<AuthType | null>("auth", {
     defaultValue: null,
   });
-  
+
   const [authReady, setAuthReady] = useState(false);
 
   // Mark auth as ready after first mount (even if null)

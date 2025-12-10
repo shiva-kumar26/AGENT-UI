@@ -88,7 +88,7 @@ export default function WelcomePage() {
             },
             { headers: { "Content-Type": "application/json" } }
           );
-        } catch {}
+        } catch { }
 
         login({
           userId: agentId,
@@ -117,7 +117,7 @@ export default function WelcomePage() {
     } catch (error: any) {
       setError(
         error.response?.data?.message ||
-          "Already logged in. Please force logout or contact supervisor."
+        "Already logged in. Please force logout or contact supervisor."
       );
     } finally {
       setIsLoading(false);
@@ -197,17 +197,26 @@ export default function WelcomePage() {
 
               <div className="space-y-2">
                 <Label>Password</Label>
-                <Input
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-                <Button type="button" onClick={() => setShowPassword(!showPassword)}>
-                  {showPassword ? <EyeOff /> : <Eye />}
-                </Button>
+                <div className="relative">
+                  <Input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4 text-gray-500" /> : <Eye className="h-4 w-4 text-gray-500" />}
+                  </Button>
+                </div>
               </div>
 
-              <Button id="login-btn" type="submit" disabled={isLoading}>
+              <Button id="login-btn" type="submit" disabled={isLoading} className="w-full">
                 {isLoading ? "Signing in..." : "Sign In"}
               </Button>
             </form>
