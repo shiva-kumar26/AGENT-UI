@@ -145,7 +145,35 @@ export default function DashboardPage() {
   const context = useContext(WebSocketEventContext);
   const latestEvent = context?.latestEvent;
   const extension = auth?.userId;
+  
 
+
+
+   // ✅ AUTO LOGOUT WHEN TAB / BROWSER IS CLOSED
+useEffect(() => {
+  const handleUnload = () => {
+    if (!auth?.userId) return;
+
+    const payload = JSON.stringify({
+      user_id: auth.userId, // ✅ MUST match backend key
+    });
+
+    navigator.sendBeacon(
+      `${backendConfig.baseURL}${backendConfig.logoutEndPoint}`,
+      payload
+    );
+
+    console.log("✅ AUTO LOGOUT ON TAB CLOSE →", auth.userId);
+  };
+
+  window.addEventListener("beforeunload", handleUnload);
+
+  return () => {
+    window.removeEventListener("beforeunload", handleUnload);
+  };
+}, [auth?.userId]);
+
+  
   // 🧠 Track live active calls by CallID
   const [activeCallIds, setActiveCallIds] = useState<Set<string>>(new Set());
 
