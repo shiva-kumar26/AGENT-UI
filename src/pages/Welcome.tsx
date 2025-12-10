@@ -71,6 +71,7 @@ export default function WelcomePage() {
           user_id: userId,
           hostname,
           role = "agent",
+          session_id,
         } = response.data;
 
         if (!agentId) {
@@ -106,6 +107,7 @@ export default function WelcomePage() {
           role,
           userId: userId || agentId,
           extension: agentId,
+          // session_id,
         });
 
         setTimeout(() => {
