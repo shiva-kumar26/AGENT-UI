@@ -7,11 +7,19 @@ import {
   Users,
   MessageSquare,
   Phone,
+  PhoneMissed,
   Clock,
   ArrowUpRight,
   TrendingUp,
   RotateCw,
 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { createPageUrl } from "@/utils/utils";
 import { CallContext } from "../components/calls/CallProvider";
 import { backendConfig } from "@/config/config";
@@ -19,17 +27,12 @@ import axios from "axios";
 import { AuthContext } from "@/store/AuthContext";
 import { WebSocketEventContext } from "@/store/WebSocketEventContext";
 import AlertSystem from '../components/ui/AlertSystem';
+import { useInteractions, Interaction } from "@/store/InteractionContext";
 
 
 
 // ✅ Type Definitions
-interface Interaction {
-  call_id: string;
-  caller: string;
-  callee: string;
-  disposition?: string;
-  created_date: string;
-}
+// Interaction imported from context
 
 
 interface DashboardStats {
@@ -37,7 +40,7 @@ interface DashboardStats {
   activeInteractions: number;
   totalCalls: number;
   avgResponseTime: string;
-  today: number;
+  missed: number;
 }
 
 
@@ -124,205 +127,133 @@ const convertToLocalDate = (dateString: string): Date => {
 
 
 export default function DashboardPage() {
+  const { agentInteractions, refresh, loading: interactionsLoading } = useInteractions();
+
+  // Local state for UI
+  const [timeRange, setTimeRange] = useState("today");
   const [stats, setStats] = useState<DashboardStats>({
     totalCustomers: 0,
     activeInteractions: 0,
     totalCalls: 0,
     avgResponseTime: "2.3 min",
-    today: 0,
+    missed: 0,
   });
-
   const [recentInteractions, setRecentInteractions] = useState<Interaction[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [lastRefreshTime, setLastRefreshTime] = useState<string>("Loading...");
-  
-  // ✅ Live time display (updates every second) - NO SECONDS
+  const [customers, setCustomers] = useState<any[]>([]);
   const [liveTime, setLiveTime] = useState<string>("");
-  
-  const { startCall } = useContext(CallContext);
+  const [activeCallIds, setActiveCallIds] = useState<Set<string>>(new Set());
+
   const { auth } = useContext(AuthContext);
   const navigate = useNavigate();
   const context = useContext(WebSocketEventContext);
   const latestEvent = context?.latestEvent;
   const extension = auth?.userId;
 
-  // 🧠 Track live active calls by CallID
-  const [activeCallIds, setActiveCallIds] = useState<Set<string>>(new Set());
-
-  // ✅ Update live time every second - NO SECONDS
+  // ✅ Live time clock
   useEffect(() => {
     const updateTime = () => {
-      const now = new Date();
-      const time = now.toLocaleString("en-IN", {
+      setLiveTime(new Date().toLocaleString("en-IN", {
         hour: "2-digit",
         minute: "2-digit",
         hour12: true,
-      });
-      setLiveTime(time);
+      }));
     };
-
-    updateTime(); // Set immediately
+    updateTime();
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
 
-  // 🧠 Real-time active call tracking from WebSocket
+  // ✅ Fetch Customers (Still local for now)
+  useEffect(() => {
+    const fetchCustomers = async () => {
+      try {
+        const res = await axios.get(`${backendConfig.baseURL}${backendConfig.customers}`);
+        setCustomers(res.data || []);
+      } catch (e) {
+        console.error("Failed to fetch customers", e);
+      }
+    };
+    fetchCustomers();
+  }, []);
+
+  // ✅ WebSocket Call Tracking
   useEffect(() => {
     if (!latestEvent) return;
+    const callEvent = latestEvent.Event || latestEvent.EventName || latestEvent["Event-Name"] || "";
+    const caller = latestEvent.Caller || latestEvent["Caller-ID-Number"] || latestEvent["Caller-Number"] || "";
+    const callee = latestEvent.Callee || latestEvent["Caller-Destination-Number"] || latestEvent["Destination-Number"] || "";
+    const callId = latestEvent.CallID || latestEvent.UniqueID || latestEvent["Unique-ID"] || `${caller}-${callee}`;
 
-    const callEvent =
-      latestEvent.Event ||
-      latestEvent.EventName ||
-      latestEvent["Event-Name"] ||
-      "";
-    const caller =
-      latestEvent.Caller ||
-      latestEvent["Caller-ID-Number"] ||
-      latestEvent["Caller-Number"] ||
-      "";
-    const callee =
-      latestEvent.Callee ||
-      latestEvent["Caller-Destination-Number"] ||
-      latestEvent["Destination-Number"] ||
-      "";
-    const callId =
-      latestEvent.CallID ||
-      latestEvent.UniqueID ||
-      latestEvent["Unique-ID"] ||
-      `${caller}-${callee}`;
-
-    if (callEvent) {
-      if (
-        (caller && caller.includes(extension)) ||
-        (callee && callee.includes(extension))
-      ) {
-        setActiveCallIds((prev) => {
-          const newSet = new Set(prev);
-          if (
-            [
-              "CHANNEL_BRIDGE",
-              "CHANNEL_ANSWER",
-              "CHANNEL_CREATE",
-            ].includes(callEvent)
-          ) {
-            newSet.add(callId);
-          }
-          if (callEvent === "CHANNEL_HANGUP") {
-            newSet.delete(callId);
-          }
-          return newSet;
-        });
-      }
+    if (callEvent && ((caller && caller.includes(extension)) || (callee && callee.includes(extension)))) {
+      setActiveCallIds((prev) => {
+        const newSet = new Set(prev);
+        if (["CHANNEL_BRIDGE", "CHANNEL_ANSWER", "CHANNEL_CREATE"].includes(callEvent)) {
+          newSet.add(callId);
+        }
+        if (callEvent === "CHANNEL_HANGUP") {
+          newSet.delete(callId);
+        }
+        return newSet;
+      });
     }
   }, [latestEvent, extension]);
 
-  // 🧭 Redirect if not logged in
+  // ✅ Redirect if not auth
   useEffect(() => {
-    if (!auth?.isAuthenticated) {
-      navigate(createPageUrl("Welcome"));
-    }
+    if (!auth?.isAuthenticated) navigate(createPageUrl("Welcome"));
   }, [auth, navigate]);
 
-  // 🕒 Load dashboard data EVERY 5 SECONDS
+  // ✅ MAIN DATA LOGIC: Filter Interactions based on Range
   useEffect(() => {
-    loadDashboardData();
-    const interval = setInterval(() => {
-      loadDashboardData();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    // Determine start date based on range
+    const now = new Date();
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0); // Start of today
 
-  const loadDashboardData = async (): Promise<void> => {
-    try {
-      setIsLoading(true);
-      const [customersRes, interactionsRes] = await Promise.all([
-        axios.get(`${backendConfig.baseURL}${backendConfig.customers}`),
-        axios.get(`${backendConfig.baseURL}${backendConfig.callInteractions}`),
-      ]);
-
-      const customers: any[] = customersRes.data || [];
-      const interactions: Interaction[] = interactionsRes.data || [];
-
-      console.log(`[LOAD] Fetched ${interactions.length} interactions at ${new Date().toLocaleTimeString()}`);
-
-      // ✅ Filter for this agent only
-      const agentInteractions = interactions.filter(
-        (i) => i.caller === auth?.userId || i.callee === auth?.userId
-      );
-
-      // ✅ Get unique customer phone numbers (exclude agent ID)
-      const agentCustomerPhones = new Set<string>();
-      agentInteractions.forEach((interaction) => {
-        if (interaction.caller && interaction.caller !== auth?.userId) {
-          agentCustomerPhones.add(interaction.caller);
-        }
-        if (interaction.callee && interaction.callee !== auth?.userId) {
-          agentCustomerPhones.add(interaction.callee);
-        }
-      });
-
-      const agentCustomers = customers.filter((customer) =>
-        customer.phone && agentCustomerPhones.has(customer.phone)
-      );
-
-      // ✅ USE CONSISTENT TIMEZONE-AWARE DATE LOGIC (90 days)
-      const now = new Date();
-      let days = 90;
-      const start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-      start.setDate(start.getDate() - (days - 1));
-
-      const filteredAgentInteractions = agentInteractions.filter((i) => {
-        const d = convertToLocalDate(i.created_date);
-        return d >= start && d <= now;
-      });
-
-      // ✅ TODAY'S CALLS (LOCAL TIMEZONE)
-      const todayLocal = getTodayLocalDate();
-      const todaysCalls = filteredAgentInteractions.filter((i) => {
-        const userTimezone = getUserTimezone();
-        const dLocal = new Intl.DateTimeFormat("en-CA", {
-          timeZone: userTimezone,
-        }).format(parseBackendDate(i.created_date));
-        return dLocal === todayLocal;
-      });
-
-      // ✅ Count completed calls
-      const completedCalls = filteredAgentInteractions.filter(
-        (i) => i.disposition?.toLowerCase() === "completed"
-      ).length;
-
-      // ✅ Combine active + completed
-      const totalActiveInteractions = activeCallIds.size + completedCalls;
-
-      // ✅ Sort and take last 5
-      const recent = [...filteredAgentInteractions]
-        .sort(
-          (a, b) =>
-            parseBackendDate(b.created_date).getTime() -
-            parseBackendDate(a.created_date).getTime()
-        )
-        .slice(0, 5);
-
-      // ✅ Update stats
-      setStats({
-        totalCustomers: agentCustomers.length,
-        activeInteractions: totalActiveInteractions,
-        totalCalls: filteredAgentInteractions.length,
-        avgResponseTime: "2.3 min",
-        today: todaysCalls.length,
-      });
-
-      setRecentInteractions(recent);
-      
-      // ✅ Update last refresh time
-      setLastRefreshTime(new Date().toLocaleTimeString());
-    } catch (error) {
-      console.error("Error loading dashboard data:", error);
-    } finally {
-      setIsLoading(false);
+    if (timeRange === "7") {
+      start.setDate(start.getDate() - 6);
+    } else if (timeRange === "30") {
+      start.setDate(start.getDate() - 29);
+    } else if (timeRange === "90") {
+      start.setDate(start.getDate() - 89);
     }
-  };
+    // "today" is default (start is 00:00 today)
+
+    // Filter by date
+    const filtered = agentInteractions.filter(i => {
+      const d = parseBackendDate(i.start_time);
+      return d >= start && d <= now;
+    });
+
+    // Calculate Stats
+    const uniquePhones = new Set<string>();
+    filtered.forEach(i => {
+      if (i.caller_id && i.caller_id !== auth?.userId) uniquePhones.add(i.caller_id);
+      if (i.destination_number && i.destination_number !== auth?.userId) uniquePhones.add(i.destination_number);
+    });
+
+    // 2. Completed Calls (billsec > 0)
+    const completed = filtered.filter(i => i.billsec > 0).length;
+
+    // 3. Missed Calls (billsec === 0 AND agent was the receiver)
+    const missed = filtered.filter(i => i.billsec === 0 && i.destination_number === auth?.userId).length;
+
+
+    // Sort by date desc (Recent 5)
+    const recent = [...filtered].sort((a, b) => {
+      return parseBackendDate(b.start_time).getTime() - parseBackendDate(a.start_time).getTime();
+    }).slice(0, 5);
+
+    setStats({
+      totalCustomers: uniquePhones.size,
+      activeInteractions: activeCallIds.size + completed, // Active (Live) + Completed (Historical in range)
+      totalCalls: filtered.length,
+      avgResponseTime: "2.3 min", // Static as per original
+      missed: missed,
+    });
+    setRecentInteractions(recent);
+
+  }, [agentInteractions, customers, timeRange, activeCallIds, auth?.userId]); // Re-run when data or range changes
 
   // 🎨 Badge color helper
   const getStatusColor = (status?: string): string => {
@@ -349,21 +280,31 @@ export default function DashboardPage() {
             </h1>
             {/* ✅ REFRESH BUTTON */}
             <div className="flex items-center gap-3">
-               <AlertSystem agentId={auth?.userId} />
+              <AlertSystem agentId={auth?.userId} />
 
-            
-          
-            <Button
-              onClick={loadDashboardData}
-              disabled={isLoading}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-            >
-              <RotateCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-              {isLoading ? "Refreshing..." : "Refresh"}
-            </Button>
+              <Select value={timeRange} onValueChange={setTimeRange}>
+                <SelectTrigger className="w-[180px] bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
+                  <SelectValue placeholder="Select Range" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="7">Last 7 Days</SelectItem>
+                  <SelectItem value="30">Last 30 Days</SelectItem>
+                  <SelectItem value="90">Last 90 Days</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Button
+                onClick={refresh}
+                disabled={interactionsLoading}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+              >
+                <RotateCw className={`w-4 h-4 ${interactionsLoading ? "animate-spin" : ""}`} />
+                {interactionsLoading ? "Refreshing..." : "Refresh"}
+              </Button>
+            </div>
+
           </div>
-
-        </div>
 
           {/* ✅ Agent Name and Live Status - NORMAL SIZE, NO SECONDS */}
           <div className="flex items-center gap-6">
@@ -451,21 +392,21 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Today Calls Card */}
-          <Card className="relative overflow-hidden border-none shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 bg-gradient-to-br from-orange-500 to-orange-600">
+          {/* Missed Calls Card */}
+          <Card className="relative overflow-hidden border-none shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 bg-gradient-to-br from-red-500 to-red-600">
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                  <Clock className="w-7 h-7 text-white" />
+                  <PhoneMissed className="w-7 h-7 text-white" />
                 </div>
-                <div className="text-white/80 text-sm font-medium">Today</div>
+                <div className="text-white/80 text-sm font-medium">Missed</div>
               </div>
               <div className="space-y-1">
                 <p className="text-white/90 text-sm font-medium uppercase tracking-wide">
-                  Today Calls
+                  Missed Calls
                 </p>
                 <p className="text-5xl font-bold text-white">
-                  {stats.today}
+                  {stats.missed}
                 </p>
               </div>
             </CardContent>
@@ -495,14 +436,14 @@ export default function DashboardPage() {
               {recentInteractions.length > 0 ? (
                 recentInteractions.map((interaction, index) => {
                   // ✅ FIX TIME HERE (IST with hour12)
-                  const utcString = interaction.created_date.replace(" ", "T") + "Z";
-                  const formattedTime = new Date(utcString).toLocaleString("en-IN", {
+                  // start_time is usually ISO in API
+                  const formattedTime = new Date(interaction.start_time).toLocaleString("en-IN", {
                     hour12: true,
                   });
 
                   return (
                     <div
-                      key={interaction.call_id}
+                      key={interaction.uuid}
                       className="group p-5 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 dark:hover:from-blue-900/20 dark:hover:to-purple-900/20 transition-all duration-200 hover:shadow-md hover:border-blue-300 dark:hover:border-blue-600"
                     >
                       <div className="flex items-center justify-between">
@@ -515,13 +456,13 @@ export default function DashboardPage() {
                               <p className="font-semibold text-gray-900 dark:text-white">
                                 Caller:{" "}
                                 <span className="text-blue-600 dark:text-blue-400">
-                                  {interaction.caller || "-"}
+                                  {interaction.caller_id || "-"}
                                 </span>
                               </p>
                               <p className="text-sm text-gray-600 dark:text-gray-400">
                                 Callee:{" "}
                                 <span className="font-medium">
-                                  {interaction.callee || "-"}
+                                  {interaction.destination_number || "-"}
                                 </span>
                               </p>
                             </div>
@@ -538,10 +479,10 @@ export default function DashboardPage() {
                         <div className="flex items-center gap-3">
                           <Badge
                             className={`${getStatusColor(
-                              interaction.disposition
+                              interaction.billsec > 0 ? "Completed" : "Missed"
                             )} px-4 py-1.5 text-xs font-semibold uppercase tracking-wide`}
                           >
-                            {interaction.disposition || "unknown"}
+                            {interaction.billsec > 0 ? "Completed" : "Missed"}
                           </Badge>
                         </div>
                       </div>

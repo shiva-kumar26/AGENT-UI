@@ -399,7 +399,7 @@
 //         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
 //           <Card>
 //             <CardHeader className="flex-row justify-between items-center pb-2">
-//               <CardTitle className="text-sm font-medium">Total Interactions</CardTitle>
+//               <CardTitle className="text-sm font-semibold">Total Interactions</CardTitle>
 //               <Phone className="h-4 w-4 text-gray-500" />
 //             </CardHeader>
 //             <CardContent>
@@ -690,24 +690,18 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
   Legend,
+  BarChart,
+  Bar,
+  ComposedChart,
+  Area,
 } from "recharts";
 import axios from "axios";
 import { backendConfig } from "@/config/config";
 import { AuthContext } from "@/store/AuthContext";
+import { useInteractions, Interaction } from "@/store/InteractionContext";
 
-interface Interaction {
-  call_id: string;
-  caller: string;
-  callee: string;
-  disposition?: string;
-  duration?: number; // seconds
-  created_date: string; // ISO string
-  accept?: boolean;
-}
+// interface Interaction { ... } // utilizing imported type
 
 export default function AnalyticsPage() {
   const { auth } = useContext(AuthContext);
@@ -720,7 +714,12 @@ export default function AnalyticsPage() {
   const [avgDurationLabel, setAvgDurationLabel] = useState("0m 0s"); // human friendly
   const [avgDurationValue, setAvgDurationValue] = useState(0); // minutes (decimal)
   const [rejectedCalls, setRejectedCalls] = useState(0);
+
   const [maxNoAnswer, setMaxNoAnswer] = useState(0);
+  const [inboundCount, setInboundCount] = useState(0);
+  const [outboundCount, setOutboundCount] = useState(0);
+  const [totalTalkTimeLabel, setTotalTalkTimeLabel] = useState("0h 0m");
+  const [avgResponseTimeLabel, setAvgResponseTimeLabel] = useState("0s");
 
   const [combinedOverviewData, setCombinedOverviewData] = useState<any[]>([]);
   const [performanceData, setPerformanceData] = useState<any[]>([]);
@@ -728,10 +727,20 @@ export default function AnalyticsPage() {
   const [sentimentData, setSentimentData] = useState<any[]>([]);
   const [chartKey, setChartKey] = useState(0);
 
+  const { interactions, agentInteractions, loading: interactionsLoading } = useInteractions();
+  const [directoryData, setDirectoryData] = useState<any[]>([]);
+
   useEffect(() => {
-    fetchAnalyticsData();
+    // Fetch directory data once
+    axios.get(`${backendConfig.baseURL}/api/directory_search`)
+      .then(res => setDirectoryData(res.data || []))
+      .catch(err => console.error("Dir fetch error", err));
+  }, []);
+
+  useEffect(() => {
+    processAnalyticsData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, auth?.userId, auth?.userName]);
+  }, [range, auth?.userId, interactions, directoryData]);
 
   const formatLocalISO = (d: Date) => {
     // returns YYYY-MM-DD local
@@ -750,7 +759,7 @@ export default function AnalyticsPage() {
     if (!seconds || seconds <= 0) return "0m 0s";
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
-    const secs = Math.round(seconds % 60);
+    const secs = Math.floor(seconds % 60);
     const parts = [];
     if (hrs) parts.push(`${hrs}h`);
     if (mins) parts.push(`${mins}m`);
@@ -758,223 +767,213 @@ export default function AnalyticsPage() {
     return parts.join(" ");
   };
 
-  const fetchAnalyticsData = async () => {
-    try {
-      // fetch interactions + directory
-      const [interactionsRes, dirRes] = await Promise.all([
-        axios.get(`${backendConfig.baseURL}${backendConfig.callInteractions}`),
-        axios.get(`${backendConfig.baseURL}/api/directory_search`),
-      ]);
 
-      console.log(`Interaction API: ${backendConfig.baseURL}${backendConfig.callInteractions}`)
+  const processAnalyticsData = () => {
+    if (interactions.length === 0 && interactionsLoading) return;
 
-      const interactions: Interaction[] = interactionsRes.data || [];
-      const directoryData = dirRes.data || [];
+    // Use context data
+    // Compute date range (local)
+    const now = new Date();
+    // start: midnight local of (today - (days-1))
+    let days = 1;
+    if (range !== "today") days = parseInt(range, 10);
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
 
-      // filter agent interactions by caller/callee matching current user id
-      const agentInteractions = interactions.filter(
-        (i) => i.caller === auth?.userId || i.callee === auth?.userId
-      );
-      console.log(agentInteractions)
+    // filtered arrays
+    const filteredAgent = agentInteractions.filter((i) => {
+      const d = new Date(i.start_time);
+      return d >= start && d <= now;
+    });
 
-      // compute date range (local)
-      const now = new Date();
-      // start: midnight local of (today - (days-1))
-      let days = 1;
-      if (range !== "today") days = parseInt(range, 10);
-      const start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-      start.setDate(start.getDate() - (days - 1));
+    const filteredAll = interactions.filter((i) => {
+      const d = new Date(i.start_time);
+      return d >= start && d <= now;
+    });
 
-      // filtered arrays
-      const filteredAgent = agentInteractions.filter((i) => {
-        const d = new Date(i.created_date);
-        return d >= start && d <= now;
-      });
+    setFilteredAgentCount(filteredAgent.length);
+    setFilteredAllCount(filteredAll.length);
 
-      const filteredAll = interactions.filter((i) => {
-        const d = new Date(i.created_date);
-        return d >= start && d <= now;
-      });
+    // overall percent agent handled
+    const overallPercent = filteredAll.length > 0 ? (filteredAgent.length / filteredAll.length) * 100 : 0;
+    setInteractionPercent(Number(overallPercent.toFixed(1)));
 
-      setFilteredAgentCount(filteredAgent.length);
-      setFilteredAllCount(filteredAll.length);
+    // completed / rejected counts (agent)
+    const completedCalls = filteredAgent.filter((i) => i.billsec > 0).length;
+    // Rejected/missed implied if no billsec or answer_time is null?
+    const rejected = filteredAgent.filter(
+      (i) => i.billsec === 0 || !i.answer_time
+    ).length;
+    setRejectedCalls(rejected);
 
-      // overall percent agent handled
-      const overallPercent = filteredAll.length > 0 ? (filteredAgent.length / filteredAll.length) * 100 : 0;
-      setInteractionPercent(Number(overallPercent.toFixed(1)));
+    const compPercent = filteredAgent.length > 0 ? (completedCalls / filteredAgent.length) * 100 : 0;
 
-      // completed / rejected counts (agent)
-      const completedCalls = filteredAgent.filter((i) => i.disposition?.toLowerCase() === "completed").length;
-      const rejected = filteredAgent.filter(
-        (i) =>
-          i.disposition?.toLowerCase() === "rejected" ||
-          i.disposition?.toLowerCase() === "missed" ||
-          i.accept === false
-      ).length;
-      setRejectedCalls(rejected);
+    setCompletedRate(Number(compPercent.toFixed(1)));
 
-      const compPercent = filteredAgent.length > 0 ? (completedCalls / filteredAgent.length) * 100 : 0;
-      setCompletedRate(Number(compPercent.toFixed(1)));
+    // Inbound / Outbound
+    setInboundCount(filteredAgent.filter(i => i.direction === "inbound").length);
+    setOutboundCount(filteredAgent.filter(i => i.direction === "outbound").length);
 
-      // --- Average Duration calculation from CDR API
-      const dailyCallDurations: Record<string, number[]> = {};
-      const callDurationsSec: number[] = [];
+    // Total Talk Time
+    const totalSec = filteredAgent.reduce((acc, curr) => acc + (curr.billsec || 0), 0);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = Math.round(totalSec % 60);
+    setTotalTalkTimeLabel(`${h}h ${m}m ${s}s`);
 
-      try {
-        console.log("=== Fetching CDR Reports for Call Duration ===");
+    // --- Average Duration calculation from Context Data
+    const dailyCallDurations: Record<string, number[]> = {};
+    const callDurationsSec: number[] = [];
 
-        // Fetch CDR reports
-        const cdrRes = await axios.get("http://10.16.7.96:8001/cdr-reports/all");
-        // API returns { status: "success", data: [...] }
-        const cdrReports = cdrRes.data?.data || [];
+    // Extract billsec (call duration in seconds) from filtered records
+    filteredAgent.forEach((record) => {
+      const billsec = record.billsec;
 
-        console.log("Total CDR records fetched:", cdrReports.length);
-        console.log("Sample CDR record:", cdrReports[0]);
+      if (billsec && billsec > 0) {
+        callDurationsSec.push(billsec);
 
-        // Filter CDR records for current agent and date range
-        const agentCDRs = cdrReports.filter((record: any) => {
-          // Check if agent is involved (as caller_id or destination_number)
-          const isAgentCall =
-            record.caller_id === auth?.userId ||
-            record.destination_number === auth?.userId ||
-            record.name === auth?.userId;
-
-          if (!isAgentCall) return false;
-
-          // Check date range using start_time
-          if (record.start_time) {
-            const callDate = new Date(record.start_time);
-            return callDate >= start && callDate <= now;
-          }
-          return false;
-        });
-
-        console.log("Agent CDR records in range:", agentCDRs.length);
-
-        // Extract billsec (call duration in seconds) from filtered records
-        agentCDRs.forEach((record: any) => {
-          const billsec = record.billsec;
-
-          if (billsec && billsec > 0) {
-            callDurationsSec.push(billsec);
-
-            // Group by date for daily averages
-            if (record.start_time) {
-              const key = formatLocalISO(new Date(record.start_time));
-              if (!dailyCallDurations[key]) dailyCallDurations[key] = [];
-              dailyCallDurations[key].push(billsec);
-            }
-          }
-        });
-
-        console.log("Calls with valid billsec:", callDurationsSec.length);
-        console.log("Duration values (seconds):", callDurationsSec.slice(0, 5));
-      } catch (err) {
-        console.error("Error fetching CDR reports:", err);
-        // Continue with empty data if API fails
+        // Group by date for daily averages
+        if (record.start_time) {
+          const key = formatLocalISO(new Date(record.start_time));
+          if (!dailyCallDurations[key]) dailyCallDurations[key] = [];
+          dailyCallDurations[key].push(billsec);
+        }
       }
+    });
 
-      const masterDurations = callDurationsSec;
-      const masterDaily = dailyCallDurations;
+    const masterDurations = callDurationsSec;
+    const masterDaily = dailyCallDurations;
 
-      let avgSeconds = 0;
-      if (masterDurations.length > 0) avgSeconds = masterDurations.reduce((a, b) => a + b, 0) / masterDurations.length;
-      const avgLabel = avgSeconds > 0 ? secondsToLabel(avgSeconds) : "0m 0s";
-      setAvgDurationLabel(avgLabel);
-      setAvgDurationValue(Number((avgSeconds / 60).toFixed(2))); // minutes decimal
+    let avgSeconds = 0;
+    if (masterDurations.length > 0) avgSeconds = masterDurations.reduce((a, b) => a + b, 0) / masterDurations.length;
+    const avgLabel = avgSeconds > 0 ? secondsToLabel(avgSeconds) : "0m 0s";
+    setAvgDurationLabel(avgLabel);
+    setAvgDurationValue(Number((avgSeconds / 60).toFixed(2))); // minutes decimal
 
-      // Build performance chart from per-day averages (from masterDaily)
-      // Ensure we create a continuous date list from start -> now
-      const dateList: string[] = [];
-      const cursor = new Date(start);
-      cursor.setHours(0, 0, 0, 0);
-      const upTo = new Date(now);
-      upTo.setHours(0, 0, 0, 0);
-      while (cursor <= upTo) {
-        dateList.push(formatLocalISO(new Date(cursor)));
-        cursor.setDate(cursor.getDate() + 1);
-      }
-
-      const perf: any[] = dateList.map((date) => {
-        const arr = masterDaily[date] || [];
-        const avgMin = arr.length > 0 ? Number((arr.reduce((a, b) => a + b, 0) / arr.length / 60).toFixed(2)) : 0;
-        return { name: date, avgDuration: avgMin };
-      });
-      setPerformanceData(perf);
-
-      // Build combined overview data (total/completed/missed/avgDuration per day)
-      // but make sure "total" refers to agent's total for that day
-      const groupedAgentPerDay: Record<string, { total: number; completed: number; missed: number }> = {};
-      filteredAgent.forEach((i) => {
-        const key = formatLocalISO(new Date(i.created_date));
-        if (!groupedAgentPerDay[key]) groupedAgentPerDay[key] = { total: 0, completed: 0, missed: 0 };
-        groupedAgentPerDay[key].total++;
-        if ((i.disposition || "").toLowerCase() === "completed") groupedAgentPerDay[key].completed++;
-        if ((i.disposition || "").toLowerCase() === "missed" || (i.disposition || "").toLowerCase() === "rejected" || i.accept === false) groupedAgentPerDay[key].missed++;
-      });
-
-      const combined = dateList.map((date) => {
-        const g = groupedAgentPerDay[date] || { total: 0, completed: 0, missed: 0 };
-        const perfEntry = perf.find((p) => p.name === date);
-        return {
-          name: date,
-          total: g.total,
-          completed: g.completed,
-          missed: g.missed,
-          avgDuration: perfEntry ? perfEntry.avgDuration : 0,
-        };
-      });
-
-      setCombinedOverviewData(combined);
-
-      // Interaction percent per day relative to ALL calls on that day
-      // Build daily all counts
-      const dailyAllCounts: Record<string, number> = {};
-      filteredAll.forEach((i) => {
-        const key = formatLocalISO(new Date(i.created_date));
-        dailyAllCounts[key] = (dailyAllCounts[key] || 0) + 1;
-      });
-
-      const percentGraph = combined.map((d) => ({
-        name: d.name,
-        percentage: dailyAllCounts[d.name] && dailyAllCounts[d.name] > 0 ? Number(((d.total / dailyAllCounts[d.name]) * 100).toFixed(1)) : 0,
-      }));
-      setInteractionPercentGraph(percentGraph);
-
-      // Sentiment pie - use card values
-      // Total Interactions (we'll use filteredAgentCount) -> show as count rather than % in tooltip
-      // But for visual slice sizes we will convert counts to meaningful numbers:
-      // - Total interactions -> filteredAgentCount (count)
-      // - Completed -> completedCalls (count)
-      // - Avg Duration -> avgDurationValue (minutes)
-      // - Missed -> rejected (count)
-      const sentiment = [
-        { name: "Total Interactions", value: filteredAgent.length, color: "#3b82f6" },
-        { name: "Completed", value: completedCalls, color: "#16a34a" },
-        { name: "Avg Duration", value: avgDurationValue || 0.0001, color: "#f59e0b", avg: avgLabel },
-        { name: "Missed / No Answer", value: rejected, color: "#dc2626" },
-      ];
-      setSentimentData(sentiment);
-      setChartKey((k) => k + 1);
-
-      // agent directory (max no answer)
-      const currentAgent = (directoryData || []).find(
-        (a: any) =>
-          (a.user_id && auth?.userId && a.user_id.toLowerCase() === auth.userId.toLowerCase()) ||
-          (a.name && auth?.userId && a.name.includes(auth.userId))
-      );
-      if (currentAgent) {
-        setMaxNoAnswer(currentAgent.max_no_answer || 0);
-        // Only overwrite rejectedCalls if directory has a specific stored value; else keep calculated
-        setRejectedCalls(currentAgent.no_answer_count ?? rejected);
-      }
-    } catch (err) {
-      console.error("Error fetching analytics:", err);
+    // Build performance chart from per-day averages (from masterDaily)
+    // Ensure we create a continuous date list from start -> now
+    const dateList: string[] = [];
+    const cursor = new Date(start);
+    cursor.setHours(0, 0, 0, 0);
+    const upTo = new Date(now);
+    upTo.setHours(0, 0, 0, 0);
+    while (cursor <= upTo) {
+      dateList.push(formatLocalISO(new Date(cursor)));
+      cursor.setDate(cursor.getDate() + 1);
     }
-  };
 
-  const pieData = sentimentData.length ? sentimentData : [{ name: "No data", value: 1, color: "#e5e7eb" }];
+    const perf: any[] = dateList.map((date) => {
+      const arr = masterDaily[date] || [];
+      const avgMin = arr.length > 0 ? Number((arr.reduce((a, b) => a + b, 0) / arr.length / 60).toFixed(2)) : 0;
+      return { name: date, avgDuration: avgMin };
+    });
+    setPerformanceData(perf);
+
+    // Build combined overview data (total/completed/missed/avgDuration/inbound/outbound/totalTalkTime per day)
+    const groupedAgentPerDay: Record<string, {
+      total: number;
+      completed: number;
+      missed: number;
+      inbound: number;
+      outbound: number;
+      totalDuration: number; // seconds
+      totalResponseTime: number; // seconds (for avg response time)
+      responseTimeCount: number;
+    }> = {};
+
+    filteredAgent.forEach((i) => {
+      const key = formatLocalISO(new Date(i.start_time));
+      if (!groupedAgentPerDay[key]) {
+        groupedAgentPerDay[key] = {
+          total: 0,
+          completed: 0,
+          missed: 0,
+          inbound: 0,
+          outbound: 0,
+          totalDuration: 0,
+          totalResponseTime: 0,
+          responseTimeCount: 0
+        };
+      }
+      groupedAgentPerDay[key].total++;
+      groupedAgentPerDay[key].totalDuration += (i.billsec || 0);
+
+      if (i.billsec > 0) groupedAgentPerDay[key].completed++;
+      else groupedAgentPerDay[key].missed++;
+
+      if (i.direction === "inbound") groupedAgentPerDay[key].inbound++;
+      else if (i.direction === "outbound") groupedAgentPerDay[key].outbound++;
+
+      // Calc response time for this call if applicable
+      if (i.direction === "inbound" && i.destination_number === auth?.userId && i.duration > 0 && i.billsec > 0) {
+        const rt = i.duration - i.billsec;
+        if (rt > 0) {
+          groupedAgentPerDay[key].totalResponseTime += rt;
+          groupedAgentPerDay[key].responseTimeCount++;
+        }
+      }
+    });
+
+    const combined = dateList.map((date) => {
+      const g = groupedAgentPerDay[date] || {
+        total: 0, completed: 0, missed: 0, inbound: 0, outbound: 0, totalDuration: 0, totalResponseTime: 0, responseTimeCount: 0
+      };
+      const perfEntry = perf.find((p) => p.name === date);
+      const avgResp = g.responseTimeCount > 0 ? g.totalResponseTime / g.responseTimeCount : 0;
+
+      return {
+        name: date,
+        total: g.total,
+        completed: g.completed,
+        missed: g.missed,
+        inbound: g.inbound,
+        outbound: g.outbound,
+        totalTalkTime: Number((g.totalDuration / 60).toFixed(2)), // in mins (kept for overlap chart if needed)
+        totalTalkTimeHours: Number((g.totalDuration / 3600).toFixed(2)), // in hours (for new chart)
+        avgDuration: perfEntry ? perfEntry.avgDuration : 0, // in mins
+        avgDurationSeconds: perfEntry ? Math.round(perfEntry.avgDuration * 60) : 0, // in seconds
+        avgResponseTime: avgResp // in seconds
+      };
+    });
+
+    setCombinedOverviewData(combined);
+    // Reuse combined data for other graphs or just use it directly
+    setInteractionPercentGraph(combined); // Now contains inbound/outbound
+
+    // Sentiment removed
+    setChartKey((k) => k + 1);
+
+    // agent directory (max no answer)
+    const currentAgent = (directoryData || []).find(
+      (a: any) =>
+        (a.user_id && auth?.userId && a.user_id.toLowerCase() === auth.userId.toLowerCase()) ||
+        (a.name && auth?.userId && a.name.includes(auth.userId))
+    );
+    if (currentAgent) {
+      setMaxNoAnswer(currentAgent.max_no_answer || 0);
+      setRejectedCalls(currentAgent.no_answer_count ?? rejected);
+    }
+
+    // --- Scalar Avg Response Time (Total) ---
+    // (Already calculated below, but we can reuse the daily logic if we wanted, sticking to separate total calc for safety)
+    const responseTimeCalls = filteredAgent.filter(i =>
+      i.direction === "inbound" &&
+      i.destination_number === auth?.userId &&
+      i.duration > 0 &&
+      i.billsec > 0
+    );
+
+    let totalResponseTime = 0;
+    responseTimeCalls.forEach(i => {
+      // response time = duration - billsec
+      const rt = i.duration - i.billsec;
+      if (rt > 0) totalResponseTime += rt;
+    });
+
+    const avgRT = responseTimeCalls.length > 0 ? totalResponseTime / responseTimeCalls.length : 0;
+    setAvgResponseTimeLabel(secondsToLabel(avgRT));
+  };
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
@@ -995,53 +994,82 @@ export default function AnalyticsPage() {
           </Select>
         </div>
 
+
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardHeader className="flex-row justify-between items-center pb-2">
-              <CardTitle className="text-sm font-medium">Total Interactions</CardTitle>
-              <Phone className="h-4 w-4 text-gray-500" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+          {/* Total Interactions */}
+          <Card className="h-full shadow-sm border-slate-200">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-semibold text-slate-900">Total Interactions</CardTitle>
+              <Phone className="h-4 w-4 text-blue-600" />
             </CardHeader>
             <CardContent>
-              <p className="text-xs text-gray-400 mb-1">
-                You handled{" "}
-                <span className="font-semibold text-gray-700">{filteredAgentCount}</span> of{" "}
-                <span className="font-semibold text-gray-700">{filteredAllCount}</span> calls
+              <div className="text-2xl font-bold text-blue-800">{interactionPercent}%</div>
+              <p className="text-xs text-slate-500 mt-1">
+                {filteredAgentCount} / {filteredAllCount} calls
               </p>
-              <div className="text-3xl font-bold text-gray-900">{interactionPercent}%</div>
+              {/* Optional: Inbound/Outbound split */}
+              <div className="mt-3 flex gap-2 text-xs">
+                <span className="px-2 py-0.5 bg-blue-50 text-blue-800 rounded border border-blue-100">
+                  In: {inboundCount}
+                </span>
+                <span className="px-2 py-0.5 bg-blue-50 text-blue-800 rounded border border-blue-100">
+                  Out: {outboundCount}
+                </span>
+              </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex-row justify-between items-center pb-2">
-              <CardTitle className="text-sm font-medium">Completed Call Rate</CardTitle>
-              <CheckCircle className="h-4 w-4 text-gray-500" />
+          {/* Completed Call Rate */}
+          <Card className="h-full shadow-sm border-slate-200">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-semibold text-slate-900">Completed Rate</CardTitle>
+              <CheckCircle className="h-4 w-4 text-blue-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-green-600">{completedRate}%</div>
-              <p className="text-xs text-gray-500 mt-1">of your handled calls were completed</p>
+              <div className="text-2xl font-bold text-blue-800">{completedRate}%</div>
+              <p className="text-xs text-slate-500 mt-1">Call Completion rate</p>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex-row justify-between items-center pb-2">
-              <CardTitle className="text-sm font-medium">Average Call Duration</CardTitle>
-              <Clock className="h-4 w-4 text-gray-500" />
+          {/* Average Call Duration */}
+          <Card className="h-full shadow-sm border-slate-200">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-semibold text-slate-900">Avg Duration</CardTitle>
+              <Clock className="h-4 w-4 text-blue-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{avgDurationLabel}</div>
-              <p className="text-xs text-blue-500 mt-1">Average duration per call</p>
+              <div className="text-2xl font-bold text-blue-800">{avgDurationLabel}</div>
+              <p className="text-xs text-slate-500 mt-1">Average duration per call</p>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex-row justify-between items-center pb-2">
-              <CardTitle className="text-sm font-medium">Missed / No Answer Calls</CardTitle>
-              <XCircle className="h-4 w-4 text-red-500" />
+
+          {/* NEW: Total Talk Time */}
+          <Card className="h-full shadow-sm border-slate-200">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-semibold text-slate-900">Total Talk Time</CardTitle>
+              <Clock className="h-4 w-4 text-blue-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-red-600">{rejectedCalls}</div>
-              <p className="text-xs text-red-400 mt-1">Max No Answer Limit: {maxNoAnswer}</p>
+              <div className="text-2xl font-bold text-blue-800">
+                {totalTalkTimeLabel}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Total talk time</p>
+            </CardContent>
+          </Card>
+
+          {/* NEW: Avg Response Time */}
+          <Card className="h-full shadow-sm border-slate-200">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-semibold text-slate-900">Avg Response</CardTitle>
+              <Clock className="h-4 w-4 text-blue-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-blue-800">
+                {avgResponseTimeLabel}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Average time to answer</p>
             </CardContent>
           </Card>
         </div>
@@ -1052,7 +1080,6 @@ export default function AnalyticsPage() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="interactions">Interactions</TabsTrigger>
             <TabsTrigger value="performance">Performance</TabsTrigger>
-            <TabsTrigger value="sentiment">Sentiment</TabsTrigger>
           </TabsList>
 
           {/* Overview */}
@@ -1069,7 +1096,18 @@ export default function AnalyticsPage() {
                     <YAxis />
                     <Tooltip
                       formatter={(value: any, name: string) => {
-                        if (name === "avgDuration") return [`${value} min`, "Avg Duration (min)"];
+                        if (name === "Avg Duration (min)" || name === "Total Talk Time (min)") {
+                          // Convert decimal minutes to mm:ss format
+                          const totalSeconds = Math.round(value * 60);
+                          const h = Math.floor(totalSeconds / 3600);
+                          const mins = Math.floor((totalSeconds % 3600) / 60);
+                          const secs = totalSeconds % 60;
+                          if (h > 0) return [`${h}h ${mins}m ${secs}s`, name];
+                          return [`${mins}m ${secs}s`, name];
+                        }
+                        if (name === "Avg Response Time (s)") {
+                          return [`${Math.floor(value)}s`, name];
+                        }
                         return [value, name];
                       }}
                       labelFormatter={(label) => `Date: ${formatNice(label)}`}
@@ -1077,8 +1115,11 @@ export default function AnalyticsPage() {
                     <Legend />
                     <Line type="monotone" dataKey="total" stroke="#1d4ed8" name="Total" />
                     <Line type="monotone" dataKey="completed" stroke="#16a34a" name="Completed" />
-                    <Line type="monotone" dataKey="missed" stroke="#dc2626" name="Missed" />
-                    <Line type="monotone" dataKey="avgDuration" stroke="#f59e0b" name="Avg Duration (min)" />
+                    {/* Inbound / Outbound Lines */}
+                    <Line type="monotone" dataKey="inbound" stroke="#8b5cf6" name="Inbound" strokeDasharray="5 5" />
+                    <Line type="monotone" dataKey="outbound" stroke="#ec4899" name="Outbound" strokeDasharray="5 5" />
+                    {/* Avg Response Time */}
+                    <Line type="monotone" dataKey="avgResponseTime" stroke="#f43f5e" name="Avg Response Time (s)" />
                   </LineChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1089,17 +1130,19 @@ export default function AnalyticsPage() {
           <TabsContent value="interactions">
             <Card>
               <CardHeader>
-                <CardTitle>Interaction Completion (%)</CardTitle>
+                <CardTitle>Interaction Volume & Type</CardTitle>
               </CardHeader>
               <CardContent className="h-96">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={interactionPercentGraph}>
+                  <BarChart data={interactionPercentGraph}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" tickFormatter={(d) => formatNice(d)} />
                     <YAxis />
-                    <Tooltip formatter={(v) => `${v}%`} labelFormatter={(l) => `Date: ${formatNice(l)}`} />
-                    <Line type="monotone" dataKey="percentage" stroke="#2563eb" strokeWidth={2} />
-                  </LineChart>
+                    <Tooltip labelFormatter={(l) => `Date: ${formatNice(l)}`} />
+                    <Legend />
+                    <Bar dataKey="inbound" name="Inbound" fill="#8b5cf6" />
+                    <Bar dataKey="outbound" name="Outbound" fill="#ec4899" />
+                  </BarChart>
                 </ResponsiveContainer>
               </CardContent>
             </Card>
@@ -1109,49 +1152,69 @@ export default function AnalyticsPage() {
           <TabsContent value="performance">
             <Card>
               <CardHeader>
-                <CardTitle>Average Duration (Minutes)</CardTitle>
+                <CardTitle>Duration Metrics (Minutes)</CardTitle>
               </CardHeader>
               <CardContent className="h-96">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={performanceData}>
+                  <ComposedChart data={combinedOverviewData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" tickFormatter={(d) => formatNice(d)} />
-                    <YAxis />
-                    <Tooltip formatter={(v) => `${v} min`} labelFormatter={(l) => `Date: ${formatNice(l)}`} />
-                    <Line type="monotone" dataKey="avgDuration" stroke="#10b981" strokeWidth={2} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </TabsContent>
 
-          {/* Sentiment */}
-          <TabsContent value="sentiment">
-            <Card>
-              <CardHeader>
-                <CardTitle>Sentiment (All Cards)</CardTitle>
-              </CardHeader>
-              <CardContent className="h-96">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart key={chartKey}>
-                    <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={120} label>
-                      {pieData.map((entry, i) => (
-                        <Cell key={i} fill={(entry as any).color || "#cbd5e1"} stroke="#fff" />
-                      ))}
-                    </Pie>
-                    <Legend />
-                    <Tooltip
-                      formatter={(value: any, name: string) => {
-                        if (name === "Avg Duration") {
-                          // show formatted avg label
-                          const avgObj = sentimentData.find((d) => d.name === "Avg Duration");
-                          return [avgObj?.avg ?? `${value} mins`, "Avg Duration"];
-                        }
-                        // For Total Interactions & Completed & Missed, show count (not %)
-                        return [value, name];
-                      }}
+                    {/* Left Axis: Seconds (For Avg Duration & Response Time) */}
+                    <YAxis
+                      yAxisId="left"
+                      label={{ value: "Seconds", angle: -90, position: "insideLeft" }}
                     />
-                  </PieChart>
+
+                    {/* Right Axis: Hours (For Total Talk Time) */}
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      label={{ value: "Hours", angle: 90, position: "insideRight" }}
+                    />
+
+                    <Tooltip
+                      formatter={(v: any, name: string) => {
+                        if (name === "Avg Response Time") return [secondsToLabel(v), name];
+                        if (name === "Avg Duration") return [secondsToLabel(v), name];
+                        if (name === "Total Talk Time") return [secondsToLabel(v * 3600), name];
+                        return [v, name];
+                      }}
+                      labelFormatter={(l) => `Date: ${formatNice(l)}`}
+                    />
+                    <Legend />
+
+                    {/* Background Area for Total Hours */}
+                    <Area
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="totalTalkTimeHours"
+                      name="Total Talk Time"
+                      fill="#f59e0b"
+                      stroke="#f59e0b"
+                      fillOpacity={0.2}
+                    />
+
+                    {/* Lines for Averages (Seconds) */}
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="avgDurationSeconds"
+                      name="Avg Duration"
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                    />
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="avgResponseTime"
+                      name="Avg Response Time"
+                      stroke="#f43f5e"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                    />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </CardContent>
             </Card>
