@@ -169,7 +169,7 @@ useEffect(() => {
     } catch (error) {
       console.error("Force logout check error:", error);
     }
-  }, 3000);
+  }, 1000);
 
   return () => clearInterval(intervalId);
 }, []);

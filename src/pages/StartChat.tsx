@@ -1,149 +1,238 @@
-import React, { useState, useContext } from "react";
+import React, { useState, useEffect, useRef, useContext } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send, ArrowLeft, X } from "lucide-react";
+import { Send, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils/utils";
-import { ChatContext } from "@/store/ChatContext";
+import { AuthContext } from "@/store/AuthContext";
+
+const WS_URL = "ws://10.16.7.91:8000/ws/agent";
+
+interface ChatMessage {
+  from: "agent" | "customer";
+  text: string;
+}
 
 export default function StartChatPage() {
   const navigate = useNavigate();
+  const { auth } = useContext(AuthContext);
+  const socketRef = useRef<WebSocket | null>(null);
 
-  // const messages = [
-  //   { from: "customer", text: "Hi, I need some help with my account." },
-  //   {
-  //     from: "agent",
-  //     text: "Of course! I'd be happy to help. What seems to be the issue?",
-  //   },
-  //   {
-  //     from: "customer",
-  //     text: "I was charged twice for my last purchase, and I’m not sure why.",
-  //   },
-  //   {
-  //     from: "agent",
-  //     text: "I’m sorry to hear that. Could you please provide the order number?",
-  //   },
-  //   { from: "customer", text: "Yes, it’s #789456." },
-  //   {
-  //     from: "agent",
-  //     text: "Thanks. Let me take a look at that order for you. Please give me a moment.",
-  //   },
-  //   {
-  //     from: "agent",
-  //     text: "I can confirm there are two identical charges for the same item. It appears to be a duplicate transaction.",
-  //   },
-  //   {
-  //     from: "customer",
-  //     text: "That’s what I thought. Can I get a refund for the extra charge?",
-  //   },
-  //   {
-  //     from: "agent",
-  //     text: "Absolutely. I’ll go ahead and process a refund for the duplicate charge. It should reflect in your account within 3–5 business days.",
-  //   },
-  //   {
-  //     from: "customer",
-  //     text: "Perfect, thank you so much for your help!",
-  //   },
-  //   {
-  //     from: "agent",
-  //     text: "You're welcome! Is there anything else I can assist you with today?",
-  //   },
-  //   { from: "customer", text: "Nope, that was all. Thanks again!" },
-  //   {
-  //     from: "agent",
-  //     text: "Have a great day! Feel free to reach out if you need anything else.",
-  //   },
-  // ];
-
-  const { chatMessages, addMessage, clearChat } = useContext(ChatContext);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
+  const [isConnected, setIsConnected] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
+  // ✅ Connect WebSocket using auth data
+  useEffect(() => {
+    if (!auth?.isAuthenticated || !auth?.userId) {
+      console.log("❌ Not authenticated");
+      navigate(createPageUrl("Login"));
+      return;
+    }
+
+    console.log("🔌 Connecting with agent:", auth.userId, auth.userName);
+
+    socketRef.current = new WebSocket(WS_URL);
+
+    socketRef.current.onopen = () => {
+      console.log("✅ WebSocket connected");
+      setIsConnected(true);
+
+      // ✅ Register with auth data
+      const register = {
+        type: "agent_register",
+        agent_id: auth.userId,
+        name: auth.userName,
+      };
+
+      socketRef.current?.send(JSON.stringify(register));
+      console.log("✅ Agent registered:", auth.userId);
+    };
+
+    // ✅ FIXED MESSAGE HANDLER
+    socketRef.current.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log("📩 Received from backend:", data);
+
+        // ✅ Handle customer messages (from user endpoint)
+        // Backend sends: { metadata: { session_id: "..." }, userInput: "hello", ... }
+        if (data.userInput || data.metadata) {
+          const customerMessage = data.userInput || data.message || "";
+
+          if (customerMessage.trim()) {
+            console.log("💬 Customer says:", customerMessage);
+
+            setChatMessages((prev) => [
+              ...prev,
+              {
+                from: "customer",
+                text: customerMessage,
+              },
+            ]);
+
+            // Store session_id if provided
+            if (data.metadata?.session_id) {
+              setActiveSessionId(data.metadata.session_id);
+              console.log("📌 Session ID set:", data.metadata.session_id);
+            }
+          }
+          return;
+        }
+
+        // ✅ Handle typing events
+        if (data.event === "typing") {
+          console.log("🔤 Customer is typing...");
+          return;
+        }
+
+        // ✅ Handle stop typing events
+        if (data.event === "stop_typing") {
+          console.log("🔤 Customer stopped typing");
+          return;
+        }
+
+        // ✅ Handle agent registration response
+        if (data.type === "agent_registered") {
+          console.log("✅ Agent registered successfully:", data);
+          return;
+        }
+
+        console.log("📬 Other message:", data);
+      } catch (err) {
+        console.error("❌ Error parsing message:", err);
+      }
+    };
+
+    socketRef.current.onerror = (err) => {
+      console.error("❌ WebSocket error:", err);
+      setIsConnected(false);
+    };
+
+    socketRef.current.onclose = () => {
+      console.log("🔌 Disconnected");
+      setIsConnected(false);
+    };
+
+    return () => {
+      socketRef.current?.close();
+    };
+  }, [auth, navigate]);
+
+  // ✅ Send message
   const handleSend = () => {
-    if (newMessage.trim() === "") return;
+    if (!newMessage.trim() || !socketRef.current || !activeSessionId) return;
 
-    addMessage({ from: "agent", text: newMessage });
+    const payload = {
+      type: "agent_reply",
+      session_id: activeSessionId,
+      message: newMessage,
+    };
+
+    socketRef.current.send(JSON.stringify(payload));
+    console.log("✅ Sent to customer:", newMessage);
+
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        from: "agent",
+        text: newMessage,
+      },
+    ]);
+
     setNewMessage("");
   };
 
-  return (
-    <div className="p-6 bg-gray-50 min-h-screen flex items-center justify-center">
-      <Card className="w-full max-w-lg shadow-lg">
-        <CardHeader className="flex flex-row items-center justify-between border-b">
-          <div className="flex items-center gap-3">
+  if (!auth?.isAuthenticated) {
+    return (
+      <div className="p-6 bg-gray-50 min-h-screen flex items-center justify-center">
+        <Card className="w-full max-w-lg shadow-lg">
+          <CardContent className="p-8 text-center space-y-4">
+            <p className="text-red-600 font-bold">❌ Not Logged In</p>
             <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigate(createPageUrl("Dashboard"))}
+              onClick={() => navigate(createPageUrl("Login"))}
+              className="w-full bg-blue-600"
             >
-              {/* <ArrowLeft className="w-4 h-4" /> */}
+              Go to Login
             </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen flex items-center justify-center">
+      <Card className="w-full max-w-2xl shadow-2xl h-[600px] flex flex-col">
+        {/* HEADER */}
+        <CardHeader className="flex flex-row items-center justify-between border-b bg-gradient-to-r from-blue-50 to-blue-100 flex-shrink-0">
+          <div className="flex items-center gap-3">
             <Avatar>
-              <AvatarImage src="https://i.pravatar.cc/150?u=a042581f4e29026704d" />
-              <AvatarFallback>JD</AvatarFallback>
+              <AvatarImage src={`https://i.pravatar.cc/150?u=${auth.userId}`} />
+              <AvatarFallback>{auth.userName?.charAt(0)}</AvatarFallback>
             </Avatar>
             <div>
-              <CardTitle>John Doe</CardTitle>
-              <p className="text-sm text-green-500">Online</p>
+              <CardTitle>{auth.userName}</CardTitle>
+              <p className={`text-xs ${isConnected ? "text-green-600" : "text-red-600"}`}>
+                {isConnected ? "🟢 Online" : "🔴 Offline"}
+              </p>
             </div>
           </div>
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => {
-              clearChat();
-              navigate(createPageUrl("Dashboard"));
-            }}
+            onClick={() => navigate(createPageUrl("Dashboard"))}
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </Button>
         </CardHeader>
-        <CardContent className="p-6 space-y-4 h-96 overflow-y-auto">
-          {chatMessages.map((msg, index) => (
-            <div
-              key={index}
-              className={`flex items-end gap-2 ${
-                msg.from === "agent" ? "justify-end" : "justify-start"
-              }`}
-            >
-              {msg.from === "customer" && (
-                <Avatar className="h-8 w-8 font-bold">
-                  <AvatarFallback>JD</AvatarFallback>
-                </Avatar>
-              )}
-              <div
-                className={`rounded-lg px-4 py-2 max-w-xs ${
-                  msg.from === "agent"
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-200 text-gray-900"
-                }`}
-              >
-                <p>{msg.text}</p>
-              </div>
-              {msg.from === "agent" && (
-                <Avatar className="h-8 w-8 font-bold">
-                  <AvatarFallback>A</AvatarFallback>
-                </Avatar>
-              )}
-            </div>
-          ))}
-        </CardContent>
-        <div className="p-4 border-t flex items-center gap-2">
-          {/* <Input placeholder="Type your message..." />
-          <Button>
-            <Send className="w-4 h-4" />
-          </Button> */}
 
+        {/* CHAT */}
+        <CardContent className="flex-1 overflow-y-auto p-6 space-y-3">
+          {chatMessages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <Send className="w-16 h-16 text-gray-300 mb-4" />
+              <p className="text-gray-500 font-medium">Waiting for customer messages...</p>
+              <p className="text-xs text-gray-400 mt-2">Agent: {auth.userId}</p>
+            </div>
+          ) : (
+            chatMessages.map((msg, idx) => (
+              <div
+                key={idx}
+                className={`flex gap-2 ${msg.from === "agent" ? "justify-end" : "justify-start"}`}
+              >
+                <div
+                  className={`rounded-lg px-4 py-2 max-w-xs ${
+                    msg.from === "agent"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-200"
+                  }`}
+                >
+                  <p className="text-sm">{msg.text}</p>
+                </div>
+              </div>
+            ))
+          )}
+        </CardContent>
+
+        {/* INPUT */}
+        <div className="p-4 border-t flex gap-2 flex-shrink-0">
           <Input
-            placeholder="Type your message..."
+            placeholder={isConnected ? "Type..." : "Connecting..."}
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSend();
-            }}
+            onKeyDown={(e) => e.key === "Enter" && handleSend()}
+            disabled={!isConnected || !activeSessionId}
+            className="flex-1"
           />
-          <Button onClick={handleSend}>
+          <Button
+            onClick={handleSend}
+            disabled={!isConnected || !newMessage.trim() || !activeSessionId}
+            className="bg-blue-600"
+          >
             <Send className="w-4 h-4" />
           </Button>
         </div>

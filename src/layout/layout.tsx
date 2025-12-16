@@ -207,10 +207,16 @@ function LayoutContent({ children }: LayoutContentProps) {
           if (currentAgent.status !== agentStatus) {
             // ✅ FIX: Ignore "Logged Out" from polling to prevent stale data from forcing logout
             // The polling API might lag behind the actual login session
-            if (currentAgent.status === "Logged Out" && agentStatus !== "Logged Out") {
-              console.warn("[Layout] Ignoring 'Logged Out' from polling (potential stale state)");
-              return;
-            }
+
+          // For double login prevention
+          //if (currentAgent.status === "Logged Out" && agentStatus !== "Logged Out") {
+           //  console.warn("[Layout] Ignoring 'Logged Out' from polling (potential stale state)");
+            //return;
+          //}
+          // Prevent stale logout overwriting an active session
+         // Only update if status actually changed
+
+
 
             setAgentStatus(currentAgent.status);
             setDisplayStatus(currentAgent.status);
