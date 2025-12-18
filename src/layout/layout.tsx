@@ -208,13 +208,13 @@ function LayoutContent({ children }: LayoutContentProps) {
             // ✅ FIX: Ignore "Logged Out" from polling to prevent stale data from forcing logout
             // The polling API might lag behind the actual login session
 
-          // For double login prevention
-          //if (currentAgent.status === "Logged Out" && agentStatus !== "Logged Out") {
-           //  console.warn("[Layout] Ignoring 'Logged Out' from polling (potential stale state)");
+            // For double login prevention
+            //if (currentAgent.status === "Logged Out" && agentStatus !== "Logged Out") {
+            //  console.warn("[Layout] Ignoring 'Logged Out' from polling (potential stale state)");
             //return;
-          //}
-          // Prevent stale logout overwriting an active session
-         // Only update if status actually changed
+            //}
+            // Prevent stale logout overwriting an active session
+            // Only update if status actually changed
 
 
 
@@ -283,179 +283,177 @@ function LayoutContent({ children }: LayoutContentProps) {
 
   return (
     <TooltipProvider>
-      <SidebarProvider>
-        <div className="min-h-screen flex w-full bg-slate-50">
-          {/* Sidebar */}
-          <Sidebar className="border-r border-gray-200 bg-white">
-            <SidebarHeader className="p-2">
-              <div className="flex items-center justify-center">
-                <img src={zeniusLogo} alt="Zenius" className="w-18 h-12 mx-auto" />
-              </div>
-            </SidebarHeader>
-
-            <SidebarContent className="p-1">
-              {/* Menu items */}
-              <SidebarGroup>
-                <SidebarGroupContent>
-                  <SidebarMenu className="space-y-2">
-                    {navigationItems.map((item) => (
-                      <SidebarMenuItem key={item.title}>
-                        <SidebarMenuButton
-                          asChild
-                          className={`hover:bg-blue-50 hover:text-blue-700 transition-all duration-200 rounded-lg ${location.pathname === item.url ? "bg-blue-50 text-blue-700" : ""
-                            }`}
-                        >
-                          <Link to={item.url} className="flex items-center gap-3 px-3 py-3">
-                            <item.icon className="w-5 h-5" />
-                            <p>{item.title}</p>
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-
-              {/* Quick actions */}
-              <SidebarGroup className="mt-1">
-                <SidebarGroupContent>
-                  <div className="space-y-2">
-                    <Button
-                      className={`w-full justify-start text-gray ${activeCallDetails
-                        ? "bg-white-600 opacity-50 cursor-not-allowed hover:bg-white-600 hover:text-gray"
-                        : "bg-white-600 hover:bg-blue-50 hover:text-blue-700"
-                        }`}
-                      onClick={() => setNewCallDialogOpen(true)}
-                      disabled={activeCallDetails}
-                    >
-                      <Phone className="w-4 h-4 mr-2" />
-                      <p>New Call</p>
-                    </Button>
-
-                    <Link to={createPageUrl("ComposeEmail")}>
-                      <Button className="w-full justify-start bg-white-600 hover:bg-blue-50 hover:text-blue-700 text-gray">
-                        <Mail className="w-4 h-4 mr-2" />
-                        <p>Compose Email</p>
-                      </Button>
-                    </Link>
-
-                    <Link to={createPageUrl("StartChat")}>
-                      <Button className="w-full justify-start bg-white-600 hover:bg-blue-50 hover:text-blue-700 text-gray">
-                        <MessageCircle className="w-4 h-4 mr-2" />
-                        <p>Start Chat</p>
-                      </Button>
-                    </Link>
-                  </div>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            </SidebarContent>
-
-            {/* Footer - Agent Status Section */}
-            <SidebarFooter className="border-t border-gray-100 p-4">
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                      <span className="text-blue-700 font-semibold text-sm">
-                        {currentAgentName?.charAt(0).toUpperCase() || "A"}
-                      </span>
-                    </div>
-                    {/* ✅ Status indicator dot - UPDATES IN REAL-TIME */}
-                    <div
-                      className={`absolute -bottom-1 -right-1 w-4 h-4 ${getStatusColor(
-                        displayStatus
-                      )} rounded-full border-2 border-white transition-all duration-300`}
-                    />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    {/* ✅ NEW: Show agent name first, then extension */}
-                    <p className="font-semibold text-gray-900 text-sm truncate">
-                      {currentAgentName}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {currentAgent}
-                    </p>
-                  </div>
-                </div>
-
-                {/* ✅ Status Dropdown - NOW UPDATES IN REAL-TIME */}
-                <div className="space-y-2">
-                  <Select
-                    value={displayStatus}
-                    onValueChange={handleStatusChange}
-                    disabled={callState !== "idle"}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue>
-                        {displayStatus === "On Call" ? (
-                          <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                            <span className="text-red-500 font-medium">On Call</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <div
-                              className={`w-2 h-2 ${getStatusColor(displayStatus)} rounded-full`}
-                            />
-                            <span>{displayStatus}</span>
-                          </div>
-                        )}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {agentStatuses.map((status) => (
-                        <SelectItem key={status} value={status}>
-                          <div className="flex items-center gap-2">
-                            <div className={`w-2 h-2 ${getStatusColor(status)} rounded-full`} />
-                            {status}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </SidebarFooter>
-          </Sidebar>
-
-          {/* Main content */}
-          <main className="flex-1 flex flex-col">
-            <header className="bg-white border-b border-gray-200 px-6 py-4 md:hidden">
-              <div className="flex items-center gap-4">
-                <SidebarTrigger className="hover:bg-gray-100 p-2 rounded-lg" />
-                <h1 className="text-xl font-semibold">CallCenter Pro</h1>
-              </div>
-            </header>
-
-            <div className="relative flex-1">
-              <div className="pt-[70px]">
-                <ActiveCallBar />
-              </div>
-              <div>{children}</div>
+      <SidebarProvider className="h-screen w-full bg-slate-50 overflow-hidden">
+        {/* Sidebar */}
+        <Sidebar className="border-r border-gray-200 bg-white">
+          <SidebarHeader className="p-6 mb-4">
+            <div className="flex items-center justify-center">
+              <img src={zeniusLogo} alt="Zenius" className="h-12 w-auto object-contain" />
             </div>
+          </SidebarHeader>
 
-            {/* Global Chatbot Button */}
-            <Button
-              onClick={() => {
-                if (chatViewState === 'visible') setChatViewState('hidden');
-                else setChatViewState('visible');
-              }}
-              className="fixed bottom-4 right-4 z-50 rounded-full w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white shadow-lg flex items-center justify-center"
-            >
-              <MessageSquare className="w-6 h-6" />
-            </Button>
+          <SidebarContent className="p-1 no-scrollbar">
+            {/* Menu items */}
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <SidebarMenu className="space-y-2">
+                  {navigationItems.map((item) => (
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton
+                        asChild
+                        className={`hover:bg-blue-50 hover:text-blue-700 transition-all duration-200 rounded-lg ${location.pathname === item.url ? "bg-blue-50 text-blue-700" : ""
+                          }`}
+                      >
+                        <Link to={item.url} className="flex items-center gap-3 px-3 py-3">
+                          <item.icon className="w-5 h-5" />
+                          <p>{item.title}</p>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
 
-            {/* Global Chatbot Component */}
-            {chatViewState !== 'closed' && (
-              <div style={{ display: chatViewState === 'hidden' ? 'none' : 'block' }}>
-                <Chatbot
-                  onClose={() => setChatViewState('closed')}
-                  onMinimize={() => setChatViewState('hidden')}
-                />
+            {/* Quick actions */}
+            <SidebarGroup className="mt-1">
+              <SidebarGroupContent>
+                <div className="space-y-2">
+                  <Button
+                    className={`w-full justify-start text-gray ${activeCallDetails
+                      ? "bg-white-600 opacity-50 cursor-not-allowed hover:bg-white-600 hover:text-gray"
+                      : "bg-white-600 hover:bg-blue-50 hover:text-blue-700"
+                      }`}
+                    onClick={() => setNewCallDialogOpen(true)}
+                    disabled={activeCallDetails}
+                  >
+                    <Phone className="w-4 h-4 mr-2" />
+                    <p>New Call</p>
+                  </Button>
+
+                  <Link to={createPageUrl("ComposeEmail")}>
+                    <Button className="w-full justify-start bg-white-600 hover:bg-blue-50 hover:text-blue-700 text-gray">
+                      <Mail className="w-4 h-4 mr-2" />
+                      <p>Compose Email</p>
+                    </Button>
+                  </Link>
+
+                  <Link to={createPageUrl("StartChat")}>
+                    <Button className="w-full justify-start bg-white-600 hover:bg-blue-50 hover:text-blue-700 text-gray">
+                      <MessageCircle className="w-4 h-4 mr-2" />
+                      <p>Start Chat</p>
+                    </Button>
+                  </Link>
+                </div>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+
+          {/* Footer - Agent Status Section */}
+          <SidebarFooter className="border-t border-gray-100 p-4">
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                    <span className="text-blue-700 font-semibold text-sm">
+                      {currentAgentName?.charAt(0).toUpperCase() || "A"}
+                    </span>
+                  </div>
+                  {/* ✅ Status indicator dot - UPDATES IN REAL-TIME */}
+                  <div
+                    className={`absolute -bottom-1 -right-1 w-4 h-4 ${getStatusColor(
+                      displayStatus
+                    )} rounded-full border-2 border-white transition-all duration-300`}
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  {/* ✅ NEW: Show agent name first, then extension */}
+                  <p className="font-semibold text-gray-900 text-sm truncate">
+                    {currentAgentName}
+                  </p>
+                  <p className="text-xs text-gray-500 truncate">
+                    {currentAgent}
+                  </p>
+                </div>
               </div>
-            )}
-          </main>
-        </div>
+
+              {/* ✅ Status Dropdown - NOW UPDATES IN REAL-TIME */}
+              <div className="space-y-2">
+                <Select
+                  value={displayStatus}
+                  onValueChange={handleStatusChange}
+                  disabled={callState !== "idle"}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue>
+                      {displayStatus === "On Call" ? (
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                          <span className="text-red-500 font-medium">On Call</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div
+                            className={`w-2 h-2 ${getStatusColor(displayStatus)} rounded-full`}
+                          />
+                          <span>{displayStatus}</span>
+                        </div>
+                      )}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {agentStatuses.map((status) => (
+                      <SelectItem key={status} value={status}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 ${getStatusColor(status)} rounded-full`} />
+                          {status}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </SidebarFooter>
+        </Sidebar>
+
+        {/* Main content */}
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <header className="bg-white border-b border-gray-200 px-6 py-4 md:hidden flex-shrink-0">
+            <div className="flex items-center gap-4">
+              <SidebarTrigger className="hover:bg-gray-100 p-2 rounded-lg" />
+              <h1 className="text-xl font-semibold">CallCenter Pro</h1>
+            </div>
+          </header>
+
+          <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="pt-[70px]">
+              <ActiveCallBar />
+            </div>
+            <div className="flex-1 overflow-y-auto no-scrollbar">{children}</div>
+          </div>
+
+          {/* Global Chatbot Button */}
+          <Button
+            onClick={() => {
+              if (chatViewState === 'visible') setChatViewState('hidden');
+              else setChatViewState('visible');
+            }}
+            className="fixed bottom-4 right-4 z-50 rounded-full w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white shadow-lg flex items-center justify-center"
+          >
+            <MessageSquare className="w-6 h-6" />
+          </Button>
+
+          {/* Global Chatbot Component */}
+          {chatViewState !== 'closed' && (
+            <div style={{ display: chatViewState === 'hidden' ? 'none' : 'block' }}>
+              <Chatbot
+                onClose={() => setChatViewState('closed')}
+                onMinimize={() => setChatViewState('hidden')}
+              />
+            </div>
+          )}
+        </main>
 
         <NewCallDialog open={newCallDialogOpen} onOpenChange={setNewCallDialogOpen} />
       </SidebarProvider>

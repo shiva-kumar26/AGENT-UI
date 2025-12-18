@@ -3,10 +3,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send, X } from "lucide-react";
+import { Send, X, FileText, Edit, User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils/utils";
 import { AuthContext } from "@/store/AuthContext";
+import { ChatContext } from "@/store/ChatContext"; // ✅ Consumption
+import axios from "axios";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const WS_URL = "ws://10.16.7.91:8000/ws/agent";
 
@@ -15,15 +18,63 @@ interface ChatMessage {
   text: string;
 }
 
+interface ChatTemplate {
+  id: string;
+  name: string;
+  content: string;
+  attachments: { name: string; url: string }[];
+  images: { name: string; url: string }[];
+}
+
 export default function StartChatPage() {
   const navigate = useNavigate();
   const { auth } = useContext(AuthContext);
-  const socketRef = useRef<WebSocket | null>(null);
+  // ✅ Consume ChatContext
+  const chatContext = useContext(ChatContext);
 
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  // Fallback if context is missing (should not happen if wrapped correctly)
+  if (!chatContext) {
+    throw new Error("ChatContext is missing. Ensure ChatProvider is wrapping the app.");
+  }
+
+  const {
+    chatMessages,
+    activeSessionId,
+    customerName,
+    addMessage,
+    setSession,
+    setCustomerName
+  } = chatContext;
+
+  const socketRef = useRef<WebSocket | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [isConnected, setIsConnected] = useState(false);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<ChatTemplate[]>([]);
+
+  // ✅ Fetch Templates
+  useEffect(() => {
+    axios
+      .get("https://10.16.7.96/api/chat_templates/")
+      .then((response) => {
+        const mappedTemplates = response.data.map((item: any) => ({
+          id: String(item.chat_template_id),
+          name: item.chat_template_name,
+          content: item.chat_template_body,
+          attachments: (item.chat_attachments || []).map((att: any) => ({
+            name: att.name,
+            url: att.url,
+          })),
+          images: (item.chat_images || []).map((img: any) => ({
+            name: img.name,
+            url: img.url,
+          })),
+        }));
+        setTemplates(mappedTemplates);
+      })
+      .catch((error) => {
+        console.error("Error fetching templates:", error);
+      });
+  }, []);
 
   // ✅ Connect WebSocket using auth data
   useEffect(() => {
@@ -63,22 +114,29 @@ export default function StartChatPage() {
         if (data.userInput || data.metadata) {
           const customerMessage = data.userInput || data.message || "";
 
+          // Update customer name and session if available in metadata
+          if (data.metadata?.customer_name) {
+            setCustomerName(data.metadata.customer_name);
+          } else if (data.metadata?.name) {
+            setCustomerName(data.metadata.name);
+          }
+
+          if (data.metadata?.session_id) {
+            // Check if we need to update session ID (and potentially name if we just got it)
+            if (activeSessionId !== data.metadata.session_id) {
+              setSession(data.metadata.session_id, data.metadata.customer_name || data.metadata.name);
+              console.log("📌 Session ID set:", data.metadata.session_id);
+            }
+          }
+
           if (customerMessage.trim()) {
             console.log("💬 Customer says:", customerMessage);
 
-            setChatMessages((prev) => [
-              ...prev,
-              {
-                from: "customer",
-                text: customerMessage,
-              },
-            ]);
-
-            // Store session_id if provided
-            if (data.metadata?.session_id) {
-              setActiveSessionId(data.metadata.session_id);
-              console.log("📌 Session ID set:", data.metadata.session_id);
-            }
+            // ✅ Use Context Action
+            addMessage({
+              from: "customer",
+              text: customerMessage,
+            });
           }
           return;
         }
@@ -120,31 +178,79 @@ export default function StartChatPage() {
     return () => {
       socketRef.current?.close();
     };
-  }, [auth, navigate]);
+  }, [auth, navigate]); // Removed dependencies on context functions as they are stable (or should be)
 
   // ✅ Send message
-  const handleSend = () => {
-    if (!newMessage.trim() || !socketRef.current || !activeSessionId) return;
+  const handleSend = (messageOverride?: string) => {
+    const messageToSend = messageOverride || newMessage;
+
+    if (!messageToSend.trim() || !socketRef.current || !activeSessionId) return;
 
     const payload = {
       type: "agent_reply",
       session_id: activeSessionId,
-      message: newMessage,
+      message: messageToSend,
     };
 
     socketRef.current.send(JSON.stringify(payload));
-    console.log("✅ Sent to customer:", newMessage);
+    console.log("✅ Sent to customer:", messageToSend);
 
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        from: "agent",
-        text: newMessage,
-      },
-    ]);
+    // ✅ Use Context Action
+    addMessage({
+      from: "agent",
+      text: messageToSend,
+    });
 
-    setNewMessage("");
+    if (!messageOverride) {
+      setNewMessage("");
+    }
   };
+
+  const cleanContent = (content: string) => {
+    return content.replace(/"image"\s*:\s*"data:image[^"]*"/g, "")
+      .replace(/"image"\s*:\s*\[image\]/g, "")
+      .replace(/(\{\s*\})/g, "")
+      .replace(/,\s*}/g, "}")
+      .replace(/{\s*,/g, "{")
+      .replace(/\n{2,}/g, "\n")
+      .trim();
+  }
+
+  const handleSendTemplate = (template: ChatTemplate) => {
+    const content = cleanContent(template.content);
+    // Parse if it's JSON string, although the type says string, sometimes it's stringified JSON based on ChatTemplates.tsx
+    let messageText = content;
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed.message) {
+        messageText = parsed.message;
+      }
+    } catch {
+      // Not JSON, use as is
+    }
+    handleSend(messageText);
+  };
+
+  const handleEditTemplate = (template: ChatTemplate) => {
+    const content = cleanContent(template.content);
+    let messageText = content;
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed.message) {
+        messageText = parsed.message;
+      }
+    } catch {
+      // Not JSON
+    }
+    setNewMessage(messageText);
+  };
+
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages]);
 
   if (!auth?.isAuthenticated) {
     return (
@@ -166,77 +272,154 @@ export default function StartChatPage() {
 
   return (
     <div className="p-6 bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen flex items-center justify-center">
-      <Card className="w-full max-w-2xl shadow-2xl h-[600px] flex flex-col">
-        {/* HEADER */}
-        <CardHeader className="flex flex-row items-center justify-between border-b bg-gradient-to-r from-blue-50 to-blue-100 flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <Avatar>
-              <AvatarImage src={`https://i.pravatar.cc/150?u=${auth.userId}`} />
-              <AvatarFallback>{auth.userName?.charAt(0)}</AvatarFallback>
-            </Avatar>
-            <div>
-              <CardTitle>{auth.userName}</CardTitle>
-              <p className={`text-xs ${isConnected ? "text-green-600" : "text-red-600"}`}>
-                {isConnected ? "🟢 Online" : "🔴 Offline"}
-              </p>
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate(createPageUrl("Dashboard"))}
-          >
-            <X className="w-5 h-5" />
-          </Button>
-        </CardHeader>
+      <div className="w-full max-w-7xl h-[85vh] flex gap-6">
 
-        {/* CHAT */}
-        <CardContent className="flex-1 overflow-y-auto p-6 space-y-3">
-          {chatMessages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <Send className="w-16 h-16 text-gray-300 mb-4" />
-              <p className="text-gray-500 font-medium">Waiting for customer messages...</p>
-              <p className="text-xs text-gray-400 mt-2">Agent: {auth.userId}</p>
+        {/* LEFT SIDEBAR - TEMPLATES */}
+        <Card className="w-1/3 h-full shadow-sm border border-gray-100 bg-white/80 backdrop-blur-sm flex flex-col">
+          <div className="h-[72px] px-6 border-b bg-white/50 flex items-center flex-shrink-0">
+            <h3 className="font-semibold text-lg flex items-center gap-2 text-gray-700">
+              <FileText className="w-5 h-5 text-blue-600" />
+              Chat Templates
+            </h3>
+          </div>
+          <ScrollArea className="flex-1 p-4 bg-transparent">
+            <div className="space-y-3">
+              {templates.length === 0 ? (
+                <p className="text-gray-500 text-center py-4">No templates found</p>
+              ) : (
+                templates.map((template) => (
+                  <Card key={template.id} className="shadow-sm border-gray-100/50 hover:shadow-md transition-all duration-200 group bg-white">
+                    <CardContent className="p-4 space-y-3">
+                      <div className="font-semibold text-sm text-gray-800 group-hover:text-blue-600 transition-colors">
+                        {template.name}
+                      </div>
+                      <p className="text-xs text-gray-500 line-clamp-3 bg-gray-50 p-2 rounded-md border border-gray-100">
+                        {(() => {
+                          try {
+                            const parsed = JSON.parse(cleanContent(template.content));
+                            return parsed.message || cleanContent(template.content);
+                          } catch {
+                            return cleanContent(template.content);
+                          }
+                        })()}
+                      </p>
+                      <div className="flex gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          className="flex-1 text-xs h-8 bg-blue-600 hover:bg-blue-700 shadow-sm"
+                          onClick={() => handleSendTemplate(template)}
+                          disabled={!isConnected || !activeSessionId}
+                        >
+                          Send
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 text-xs h-8 hover:bg-gray-100"
+                          onClick={() => handleEditTemplate(template)}
+                        >
+                          <Edit className="w-3 h-3 mr-1" />
+                          Edit
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
             </div>
-          ) : (
-            chatMessages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`flex gap-2 ${msg.from === "agent" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`rounded-lg px-4 py-2 max-w-xs ${
-                    msg.from === "agent"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-200"
-                  }`}
-                >
-                  <p className="text-sm">{msg.text}</p>
+          </ScrollArea>
+        </Card>
+
+        {/* RIGHT SIDE - CHAT */}
+        <Card className="flex-1 h-full shadow-2xl border-none flex flex-col overflow-hidden relative z-10">
+          {/* HEADER */}
+          <div className="h-[72px] px-6 border-b bg-white flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <Avatar className="h-10 w-10 border-2 border-gray-100">
+                <AvatarImage src={`https://ui-avatars.com/api/?name=${customerName}&background=0D8ABC&color=fff`} />
+                <AvatarFallback><User className="w-5 h-5 text-gray-400" /></AvatarFallback>
+              </Avatar>
+              <div className="flex flex-col">
+                <CardTitle className="text-base font-bold text-gray-800">{customerName}</CardTitle>
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`} />
+                  <p className="text-xs text-gray-500 font-medium">
+                    {isConnected ? "Online" : "Offline"}
+                  </p>
                 </div>
               </div>
-            ))
-          )}
-        </CardContent>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              onClick={() => navigate(createPageUrl("Dashboard"))}
+            >
+              <X className="w-5 h-5" />
+            </Button>
+          </div>
 
-        {/* INPUT */}
-        <div className="p-4 border-t flex gap-2 flex-shrink-0">
-          <Input
-            placeholder={isConnected ? "Type..." : "Connecting..."}
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            disabled={!isConnected || !activeSessionId}
-            className="flex-1"
-          />
-          <Button
-            onClick={handleSend}
-            disabled={!isConnected || !newMessage.trim() || !activeSessionId}
-            className="bg-blue-600"
-          >
-            <Send className="w-4 h-4" />
-          </Button>
-        </div>
-      </Card>
+          {/* MESSAGES */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50/30 thin-scrollbar">
+            {chatMessages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-4">
+                  <Send className="w-8 h-8 text-blue-500 ml-1" />
+                </div>
+                <h3 className="text-gray-900 font-medium mb-1">Start a conversation</h3>
+                <p className="text-sm text-gray-500 max-w-xs">
+                  Waiting for a customer to connect. Messages will appear here.
+                </p>
+                <p className="text-xs text-gray-400 mt-4 font-mono bg-gray-100 px-2 py-1 rounded">Agent ID: {auth.userId}</p>
+              </div>
+            ) : (
+              <>
+                {chatMessages.map((msg, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex gap-3 ${msg.from === "agent" ? "justify-end" : "justify-start"}`}
+                  >
+                    {msg.from === "customer" && (
+                      <Avatar className="h-8 w-8 mt-1">
+                        <AvatarImage src={`https://ui-avatars.com/api/?name=${customerName}&background=0D8ABC&color=fff`} />
+                        <AvatarFallback>C</AvatarFallback>
+                      </Avatar>
+                    )}
+                    <div
+                      className={`rounded-2xl px-5 py-3 max-w-sm text-sm shadow-sm ${msg.from === "agent"
+                        ? "bg-blue-600 text-white rounded-tr-sm"
+                        : "bg-white border border-gray-100 text-gray-800 rounded-tl-sm"
+                        }`}
+                    >
+                      <p>{msg.text}</p>
+                    </div>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </>
+            )}
+          </div>
+
+          {/* INPUT */}
+          <div className="p-4 border-t flex gap-3 flex-shrink-0 bg-white">
+            <Input
+              placeholder={isConnected ? "Type a message..." : "Connecting..."}
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              disabled={!isConnected || !activeSessionId}
+              className="flex-1 bg-gray-50 border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-600 focus-visible:ring-blue-600 focus-visible:ring-offset-0 focus:border-transparent transition-all outline-none"
+            />
+            <Button
+              onClick={() => handleSend()}
+              disabled={!isConnected || !newMessage.trim() || !activeSessionId}
+              className="bg-blue-600 hover:bg-blue-700 shadow-md px-6"
+            >
+              <Send className="w-4 h-4" />
+            </Button>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }

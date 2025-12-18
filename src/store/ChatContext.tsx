@@ -1,21 +1,75 @@
-import React, { createContext } from "react";
+import React, { createContext, ReactNode } from "react";
 import useLocalStorageState from "use-local-storage-state";
 
-export const ChatContext = createContext(null);
+export interface ChatMessage {
+  from: "agent" | "customer";
+  text: string;
+}
 
-export const ChatProvider = ({ children }) => {
-  const [chatMessages, setChatMessages] = useLocalStorageState(
+interface ChatContextType {
+  chatMessages: ChatMessage[];
+  activeSessionId: string | null;
+  customerName: string;
+  addMessage: (message: ChatMessage) => void;
+  setSession: (sessionId: string, name?: string) => void;
+  clearChat: () => void;
+  setCustomerName: (name: string) => void;
+}
+
+export const ChatContext = createContext<ChatContextType | null>(null);
+
+export const ChatProvider = ({ children }: { children: ReactNode }) => {
+  const [chatMessages, setChatMessages] = useLocalStorageState<ChatMessage[]>(
     "chat-messages",
     {
       defaultValue: [],
     }
   );
 
-  const addMessage = (message) => setChatMessages((prev) => [...prev, message]);
+  const [activeSessionId, setActiveSessionId] = useLocalStorageState<string | null>(
+    "chat-session-id",
+    {
+      defaultValue: null,
+    }
+  );
 
-  const clearChat = () => setChatMessages([]);
+  const [customerName, setCustomerNameState] = useLocalStorageState<string>(
+    "chat-customer-name",
+    {
+      defaultValue: "Customer",
+    }
+  );
 
-  const value = { chatMessages, addMessage, clearChat };
+  const addMessage = (message: ChatMessage) => {
+    setChatMessages((prev) => [...prev, message]);
+  };
+
+  const setSession = (sessionId: string, name?: string) => {
+    setActiveSessionId(sessionId);
+    if (name) {
+      setCustomerNameState(name);
+    }
+  };
+
+  const setCustomerName = (name: string) => {
+    setCustomerNameState(name);
+  };
+
+  const clearChat = () => {
+    setChatMessages([]);
+    setActiveSessionId(null);
+    setCustomerNameState("Customer");
+  };
+
+  const value = {
+    chatMessages,
+    activeSessionId,
+    customerName,
+    addMessage,
+    setSession,
+    clearChat,
+    setCustomerName
+  };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 };

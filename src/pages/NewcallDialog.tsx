@@ -9,12 +9,12 @@ import {
 } from "@/components/ui/dialog";
 import { Phone, ArrowLeft, X, Minus } from "lucide-react";
 import { CallContext } from "../components/calls/CallProvider";
- 
+
 interface NewCallDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
- 
+
 export default function NewCallDialog({
   open,
   onOpenChange,
@@ -22,11 +22,11 @@ export default function NewCallDialog({
   const [phoneNumber, setPhoneNumber] = useState("");
   const [isMinimized, setIsMinimized] = useState(false);
   const { startCall } = useContext(CallContext);
- 
+
   useEffect(() => {
     if (!open) setIsMinimized(false);
   }, [open]);
- 
+
   const dialPadNumbers = [
     { num: "1", letters: "" },
     { num: "2", letters: "ABC" },
@@ -41,18 +41,18 @@ export default function NewCallDialog({
     { num: "0", letters: "" },
     { num: "#", letters: "" },
   ];
- 
+
   const quickDialContacts = [
     { name: "Support Line", number: "+1-800-555-0123" },
     { name: "Sales Team", number: "+1-800-555-0456" },
   ];
- 
+
   const handleNumberClick = (num: string) =>
     setPhoneNumber((prev) => prev + num);
   const handleClear = () => setPhoneNumber("");
   const handleBackspace = () => setPhoneNumber((prev) => prev.slice(0, -1));
   const handleQuickDial = (number: string) => setPhoneNumber(number);
- 
+
   const handleCall = () => {
     if (phoneNumber) {
       // Start outbound call with active state immediately
@@ -64,25 +64,25 @@ export default function NewCallDialog({
         },
         "ringing"
       );
- 
+
       // Close dialog and reset form
       onOpenChange(false);
       setPhoneNumber("");
     }
   };
- 
+
   const handleMinimize = () => {
     setIsMinimized(true);
   };
- 
+
   const handleClose = () => {
     onOpenChange(false);
     setPhoneNumber(""); // Reset form when closing
     setIsMinimized(false);
   };
- 
+
   if (!open) return null;
- 
+
   if (isMinimized) {
     return (
       <div className="fixed bottom-5 left-5 z-50">
@@ -95,10 +95,10 @@ export default function NewCallDialog({
       </div>
     );
   }
- 
+
   return (
     <Dialog open={open} onOpenChange={handleMinimize}>
-      <DialogContent className="sm:max-w-md max-h-[70vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-md max-h-[70vh] overflow-y-auto no-scrollbar">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle className="flex items-center gap-2">
@@ -115,7 +115,7 @@ export default function NewCallDialog({
             </div>
           </div>
         </DialogHeader>
- 
+
         <div className="space-y-6">
           <div className="text-center">
             <Input
@@ -125,7 +125,7 @@ export default function NewCallDialog({
               className="text-center text-lg h-12 border-2"
             />
           </div>
- 
+
           <div className="grid grid-cols-3 gap-4">
             {dialPadNumbers.map((item) => (
               <Button
@@ -143,7 +143,7 @@ export default function NewCallDialog({
               </Button>
             ))}
           </div>
- 
+
           <div className="flex justify-center gap-4">
             <Button
               variant="outline"
@@ -152,7 +152,7 @@ export default function NewCallDialog({
             >
               <ArrowLeft className="w-4 h-4" />
             </Button>
- 
+
             <Button
               onClick={handleCall}
               disabled={!phoneNumber}
@@ -161,7 +161,7 @@ export default function NewCallDialog({
               <Phone className="w-4 h-4 mr-2" />
               Call
             </Button>
- 
+
             <Button
               variant="outline"
               onClick={handleClear}
@@ -170,7 +170,7 @@ export default function NewCallDialog({
               Clear
             </Button>
           </div>
- 
+
           <div className="space-y-3">
             <h3 className="font-semibold text-gray-900">Quick Dial</h3>
             {quickDialContacts.map((contact, index) => (
@@ -192,5 +192,4 @@ export default function NewCallDialog({
     </Dialog>
   );
 }
- 
- 
+
