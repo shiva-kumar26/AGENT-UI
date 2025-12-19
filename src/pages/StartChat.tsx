@@ -7,16 +7,13 @@ import { Send, X, FileText, Edit, User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils/utils";
 import { AuthContext } from "@/store/AuthContext";
-import { ChatContext } from "@/store/ChatContext"; // ✅ Consumption
+import { ChatContext, ChatMessage } from "@/store/ChatContext"; // ✅ Consumption
 import axios from "axios";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const WS_URL = "ws://10.16.7.91:8000/ws/agent";
 
-interface ChatMessage {
-  from: "agent" | "customer";
-  text: string;
-}
+// Local interface removed, using imported ChatMessage
 
 interface ChatTemplate {
   id: string;
@@ -76,6 +73,11 @@ export default function StartChatPage() {
       });
   }, []);
 
+  const activeSessionIdRef = useRef(activeSessionId);
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
   // ✅ Connect WebSocket using auth data
   useEffect(() => {
     if (!auth?.isAuthenticated || !auth?.userId) {
@@ -110,27 +112,27 @@ export default function StartChatPage() {
         console.log("📩 Received from backend:", data);
 
         // ✅ Handle customer messages (from user endpoint)
-        // Backend sends: { metadata: { session_id: "..." }, userInput: "hello", ... }
-        if (data.userInput || data.metadata) {
+        if (data.userInput || data.metadata || data.message) {
           const customerMessage = data.userInput || data.message || "";
 
-          // Update customer name and session if available in metadata
-          if (data.metadata?.customer_name) {
-            setCustomerName(data.metadata.customer_name);
-          } else if (data.metadata?.name) {
-            setCustomerName(data.metadata.name);
+          // Update customer name and session if available
+          // Extraction priority: data.metadata.name -> data.name -> data.metadata.customer_name
+          const incomingName = data.metadata?.name || data.name || data.metadata?.customer_name;
+          if (incomingName) {
+            setCustomerName(incomingName);
           }
 
-          if (data.metadata?.session_id) {
-            // Check if we need to update session ID (and potentially name if we just got it)
-            if (activeSessionId !== data.metadata.session_id) {
-              setSession(data.metadata.session_id, data.metadata.customer_name || data.metadata.name);
-              console.log("📌 Session ID set:", data.metadata.session_id);
+          const incomingSessionId = data.metadata?.session_id || data.session_id;
+
+          if (incomingSessionId) {
+            if (activeSessionIdRef.current !== incomingSessionId) {
+              console.log(`📌 Session mismatch: Current[${activeSessionIdRef.current}] vs Incoming[${incomingSessionId}]. Calling setSession.`);
+              setSession(incomingSessionId, incomingName);
             }
           }
 
           if (customerMessage.trim()) {
-            console.log("💬 Customer says:", customerMessage);
+            console.log(`💬 [Session: ${incomingSessionId}] Customer says:`, customerMessage);
 
             // ✅ Use Context Action
             addMessage({
@@ -180,6 +182,16 @@ export default function StartChatPage() {
     };
   }, [auth, navigate]); // Removed dependencies on context functions as they are stable (or should be)
 
+  const getInitials = (name: string) => {
+    if (!name) return "C";
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
   // ✅ Send message
   const handleSend = (messageOverride?: string) => {
     const messageToSend = messageOverride || newMessage;
@@ -193,7 +205,7 @@ export default function StartChatPage() {
     };
 
     socketRef.current.send(JSON.stringify(payload));
-    console.log("✅ Sent to customer:", messageToSend);
+    console.log(`✅ [Session: ${activeSessionId}] Sent to customer:`, messageToSend);
 
     // ✅ Use Context Action
     addMessage({
@@ -337,7 +349,7 @@ export default function StartChatPage() {
             <div className="flex items-center gap-3">
               <Avatar className="h-10 w-10 border-2 border-gray-100">
                 <AvatarImage src={`https://ui-avatars.com/api/?name=${customerName}&background=0D8ABC&color=fff`} />
-                <AvatarFallback><User className="w-5 h-5 text-gray-400" /></AvatarFallback>
+                <AvatarFallback className="bg-blue-600 text-white font-bold">{getInitials(customerName)}</AvatarFallback>
               </Avatar>
               <div className="flex flex-col">
                 <CardTitle className="text-base font-bold text-gray-800">{customerName}</CardTitle>
@@ -382,16 +394,23 @@ export default function StartChatPage() {
                     {msg.from === "customer" && (
                       <Avatar className="h-8 w-8 mt-1">
                         <AvatarImage src={`https://ui-avatars.com/api/?name=${customerName}&background=0D8ABC&color=fff`} />
-                        <AvatarFallback>C</AvatarFallback>
+                        <AvatarFallback className="bg-blue-600 text-white text-[10px] font-bold">{getInitials(customerName)}</AvatarFallback>
                       </Avatar>
                     )}
                     <div
-                      className={`rounded-2xl px-5 py-3 max-w-sm text-sm shadow-sm ${msg.from === "agent"
-                        ? "bg-blue-600 text-white rounded-tr-sm"
-                        : "bg-white border border-gray-100 text-gray-800 rounded-tl-sm"
-                        }`}
+                      className={`flex flex-col ${msg.from === "agent" ? "items-end" : "items-start"}`}
                     >
-                      <p>{msg.text}</p>
+                      <div
+                        className={`rounded-2xl px-5 py-3 max-w-sm text-sm shadow-sm ${msg.from === "agent"
+                          ? "bg-blue-600 text-white rounded-tr-sm"
+                          : "bg-blue-50 border border-blue-100 text-gray-800 rounded-tl-sm"
+                          }`}
+                      >
+                        <p>{msg.text}</p>
+                      </div>
+                      <span className="text-[10px] text-gray-400 mt-1 px-1">
+                        {msg.timestamp}
+                      </span>
                     </div>
                   </div>
                 ))}

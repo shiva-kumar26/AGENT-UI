@@ -1,16 +1,17 @@
-import React, { createContext, ReactNode } from "react";
+import React, { createContext, ReactNode, useCallback, useMemo } from "react";
 import useLocalStorageState from "use-local-storage-state";
 
 export interface ChatMessage {
   from: "agent" | "customer";
   text: string;
+  timestamp: string;
 }
 
 interface ChatContextType {
   chatMessages: ChatMessage[];
   activeSessionId: string | null;
   customerName: string;
-  addMessage: (message: ChatMessage) => void;
+  addMessage: (message: Omit<ChatMessage, "timestamp">) => void;
   setSession: (sessionId: string, name?: string) => void;
   clearChat: () => void;
   setCustomerName: (name: string) => void;
@@ -40,28 +41,34 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     }
   );
 
-  const addMessage = (message: ChatMessage) => {
-    setChatMessages((prev) => [...prev, message]);
-  };
+  const addMessage = useCallback((message: Omit<ChatMessage, "timestamp">) => {
+    const newMessage = {
+      ...message,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+    setChatMessages((prev) => [...prev, newMessage]);
+  }, [setChatMessages]);
 
-  const setSession = (sessionId: string, name?: string) => {
+  const setSession = useCallback((sessionId: string, name?: string) => {
+    console.log("🧹 ChatContext: Clearing messages for new session:", sessionId);
+    setChatMessages([]);
     setActiveSessionId(sessionId);
     if (name) {
       setCustomerNameState(name);
     }
-  };
+  }, [setChatMessages, setActiveSessionId, setCustomerNameState]);
 
-  const setCustomerName = (name: string) => {
+  const setCustomerName = useCallback((name: string) => {
     setCustomerNameState(name);
-  };
+  }, [setCustomerNameState]);
 
-  const clearChat = () => {
+  const clearChat = useCallback(() => {
     setChatMessages([]);
     setActiveSessionId(null);
     setCustomerNameState("Customer");
-  };
+  }, [setChatMessages, setActiveSessionId, setCustomerNameState]);
 
-  const value = {
+  const value = useMemo(() => ({
     chatMessages,
     activeSessionId,
     customerName,
@@ -69,7 +76,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     setSession,
     clearChat,
     setCustomerName
-  };
+  }), [chatMessages, activeSessionId, customerName, addMessage, setSession, clearChat, setCustomerName]);
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 };
