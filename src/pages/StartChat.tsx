@@ -385,39 +385,49 @@ export default function StartChatPage() {
           </ScrollArea>
         </Card>
 
-        {/* CENTER - QUEUE (Visible if requests exist) */}
-        {incomingOffers.length > 0 && (
-          <Card className="w-80 h-full shadow-sm border border-gray-100 bg-white/80 backdrop-blur-sm flex flex-col ml-4">
-            <div className="h-[72px] px-6 border-b bg-white/50 flex items-center flex-shrink-0 justify-between">
-              <h3 className="font-semibold text-lg flex items-center gap-2 text-gray-700">
-                <User className="w-5 h-5 text-green-600" />
-                Queue
-              </h3>
-              <span className="bg-red-500 text-white text-xs px-2 py-1 rounded-full">{incomingOffers.length}</span>
-            </div>
-            <ScrollArea className="flex-1 p-4 bg-transparent">
-              <div className="space-y-3">
-                {incomingOffers.map((offer) => (
-                  <Card key={offer.session_id} className="shadow-sm border-l-4 border-l-green-500 hover:shadow-md transition-all cursor-pointer">
-                    <CardContent className="p-3">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="font-bold text-gray-800 text-sm">{offer.customer_name || "Unknown"}</div>
-                        <span className="text-[10px] text-gray-400">{new Date(offer.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
-                      <p className="text-xs text-gray-600 line-clamp-2 mb-3">{offer.topic || "New connection request..."}</p>
-                      <Button
-                        className="w-full h-8 text-xs bg-green-600 hover:bg-green-700"
-                        onClick={() => handleAcceptChat(offer)}
-                      >
-                        Accept Chat
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </ScrollArea>
-          </Card>
-        )}
+        {/* FLOATING NOTIFICATION STACK (Replacing Queue Column) */}
+        <div className="fixed top-4 right-4 z-50 w-96 flex flex-col gap-2 pointer-events-none">
+          {incomingOffers.map((offer) => (
+            <Card key={offer.session_id} className="shadow-lg border-l-4 border-l-green-500 bg-white pointer-events-auto animate-in slide-in-from-right-full duration-300">
+              <CardContent className="p-3">
+                <div className="flex justify-between items-start mb-1">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                    </span>
+                    <div className="font-bold text-gray-800 text-sm">{offer.customer_name || "Unknown"}</div>
+                  </div>
+                  <span className="text-[10px] text-gray-400 bg-gray-50 px-1 rounded">
+                    {new Date(offer.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+
+                <p className="text-xs text-gray-600 line-clamp-2 mb-2 pl-4 border-l-2 border-gray-100 italic">
+                  "{offer.topic || "New connection request..."}"
+                </p>
+
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    size="sm"
+                    className="flex-1 h-7 text-xs bg-green-600 hover:bg-green-700 shadow-sm"
+                    onClick={() => handleAcceptChat(offer)}
+                  >
+                    Accept
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 w-7 p-0 text-gray-400 hover:text-red-500 border-dashed"
+                    onClick={() => setIncomingOffers(prev => prev.filter(o => o.session_id !== offer.session_id))}
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
 
         {/* RIGHT SIDE - CHAT */}
         <Card className="flex-1 h-full shadow-2xl border-none flex flex-col overflow-hidden relative z-10">
