@@ -476,6 +476,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { getLatestSummary, getCustomerSummaries } from "@/store/InteractionContext";
 import {
   Phone,
   PhoneIncoming,
@@ -501,6 +502,7 @@ import axios from "axios";
 import { backendConfig, dbConfig } from "@/config/config";
  
 export default function CommunicationsPage() {
+  
   const [interactions, setInteractions] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [filteredInteractions, setFilteredInteractions] = useState([]);
@@ -509,6 +511,10 @@ export default function CommunicationsPage() {
   const [showForm, setShowForm] = useState(false);
   const [selectedInteraction, setSelectedInteraction] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [latestSummaries, setLatestSummaries] = useState<Record<string, any>>({});
+const [selectedCustomerSummaries, setSelectedCustomerSummaries] = useState<any[]>([]);
+const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
+
  
   const { activeCallDetails } = useContext(CallContext);
   const { auth } = useContext(AuthContext);
@@ -519,6 +525,29 @@ export default function CommunicationsPage() {
   // useEffect(() => {
   //   console.log("selectedInteraction", selectedInteraction);
   // }, [selectedInteraction]);
+
+  useEffect(() => {
+  const loadSummaries = async () => {
+    const map: Record<string, any> = {};
+
+    for (const interaction of interactions) {
+      const customerId = interaction.caller; // CUSTOMER = 1033
+      if (!customerId) continue;
+
+      if (!map[customerId]) {
+        const summary = await getLatestSummary(customerId);
+        map[customerId] = summary;
+      }
+    }
+
+    setLatestSummaries(map);
+  };
+
+  if (interactions.length > 0) {
+    loadSummaries();
+  }
+}, [interactions]);
+
  
   useEffect(() => {
     loadData();
@@ -536,6 +565,13 @@ export default function CommunicationsPage() {
       setSelectedInteraction(null);
     }
   }, [filteredInteractions]);
+
+  const openCustomerSummaries = async (customerId: string) => {
+  const history = await getCustomerSummaries(customerId);
+  setSelectedCustomer(customerId);
+  setSelectedCustomerSummaries(history);
+};
+
  
   const loadData = async () => {
     setIsLoading(true);
@@ -828,7 +864,11 @@ export default function CommunicationsPage() {
                                     ? "bg-blue-50 border-l-4 border-blue-600"
                                     : "border-l-4 border-transparent"
                                   }`}
-                                onClick={() => setSelectedInteraction(interaction)}
+                                onClick={() => {
+  setSelectedInteraction(interaction);
+  openCustomerSummaries(interaction.caller);
+}}
+
                               >
                                 <div className="flex items-start gap-4">
                                   <div
@@ -869,6 +909,13 @@ export default function CommunicationsPage() {
                                           : interaction.caller}
                                       </span>
                                     </div>
+                                    {/* Latest Summary */}
+{latestSummaries[interaction.caller]?.call_summary && (
+  <div className="mt-2 text-sm text-slate-600 bg-slate-100 p-2 rounded">
+    <b>Summary:</b> {latestSummaries[interaction.caller].call_summary}
+  </div>
+)}
+
                                     {/* <Badge
                                 className={`mt-2 ${getStatusColor(
                                   interaction.status
@@ -912,6 +959,29 @@ export default function CommunicationsPage() {
               className="h-full"
             >
               {renderInteractionDetail()}
+              {selectedCustomer && (
+  <Card className="mt-4">
+    <CardHeader>
+      <CardTitle>
+        Customer {selectedCustomer} — Call Summary History
+      </CardTitle>
+    </CardHeader>
+
+    <CardContent className="space-y-3">
+      {selectedCustomerSummaries.length === 0 && (
+        <div className="text-sm text-slate-500">No summaries found</div>
+      )}
+
+      {selectedCustomerSummaries.map((s, index) => (
+        <div key={index} className="p-3 bg-slate-100 rounded">
+          <div className="text-xs text-slate-500">{s.updated_at}</div>
+          <div className="text-sm">{s.call_summary}</div>
+        </div>
+      ))}
+    </CardContent>
+  </Card>
+)}
+
             </motion.div>
           </AnimatePresence>
         </div>

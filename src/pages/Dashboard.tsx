@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useNavigate, Link } from "react-router-dom";
+import { getLatestSummary } from "@/store/InteractionContext";
+
 import {
   Users,
   MessageSquare,
@@ -138,6 +140,8 @@ export default function DashboardPage() {
     avgResponseTime: "2.3 min",
     missed: 0,
   });
+  const [latestSummaries, setLatestSummaries] = useState<Record<string, any>>({});
+
   const [recentInteractions, setRecentInteractions] = useState<Interaction[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [liveTime, setLiveTime] = useState<string>("");
@@ -173,6 +177,28 @@ useEffect(() => {
 
   return () => clearInterval(intervalId);
 }, []);
+
+useEffect(() => {
+  const loadSummaries = async () => {
+    const map: Record<string, any> = {};
+
+    for (const interaction of recentInteractions) {
+      const customerId = interaction.caller_id;   // ✅ CUSTOMER = 1033
+      if (!customerId) continue;
+
+      if (!map[customerId]) {
+        const summary = await getLatestSummary(customerId);
+        map[customerId] = summary;
+      }
+    }
+
+    setLatestSummaries(map);
+  };
+
+  if (recentInteractions.length > 0) {
+    loadSummaries();
+  }
+}, [recentInteractions]);
 
    // ✅ AUTO LOGOUT WHEN TAB / BROWSER IS CLOSED
 useEffect(() => {
@@ -526,6 +552,16 @@ useEffect(() => {
                               {formattedTime}
                             </span>
                           </div>
+{/* Latest Summary (only for completed calls) */}
+{interaction?.billsec > 0 &&
+  latestSummaries?.[interaction?.caller_id]?.call_summary && (
+    <div className="mt-3 text-sm text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 p-3 rounded">
+      <b>Summary:</b> {latestSummaries[interaction.caller_id].call_summary}
+    </div>
+)}
+
+
+
                         </div>
                         <div className="flex items-center gap-3">
                           <Badge

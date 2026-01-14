@@ -118,3 +118,32 @@ export const useInteractions = () => {
     }
     return context;
 };
+// ================= SUMMARY API FUNCTIONS =================
+
+// ================= SUMMARY API FUNCTIONS =================
+
+export const getLatestSummary = async (customerId: string) => {
+  try {
+    const res = await axios.get(
+      `https://10.16.7.96/api/customers/summaries/latest/${customerId}`
+    );
+    return res.data;   // { call_summary, updated_at }
+  } catch (error) {
+    console.error("Failed to fetch latest summary:", error);
+    return { call_summary: null };
+  }
+};
+
+
+// Get all summaries for a customer (history)
+export const getCustomerSummaries = async (customerId: string) => {
+    try {
+        const res = await axios.get(
+            `https://10.16.7.96/api/customers/summaries/customer/${customerId}`
+        );
+        return res.data;   // array of summaries
+    } catch (error) {
+        console.error("Failed to fetch customer summaries:", error);
+        return [];
+    }
+};

@@ -228,7 +228,7 @@ export default function CustomersPage() {
       incomingHandledRef.current = null;
       setActiveCallCustomer("");
       setSelectedCustomer(null); // ✅ CLEAR only when call ends
-      setLastCalledCustomer(""); // ✅ Reset
+      //setLastCalledCustomer(""); // ✅ Reset
       setIsCallActive(false); // ✅ Mark as inactive
       
       // ✅ Reload customer list to refresh data
