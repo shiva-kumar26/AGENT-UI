@@ -6,7 +6,7 @@ import React, {
   useState,
 } from "react";
 import axios from "axios";
-import { backendConfig } from "@/config/config";
+import { backendConfig, chatConfig } from "@/config/config";
 import { AuthContext } from "@/store/AuthContext";
 
 export const WebSocketEventContext = createContext(null);
@@ -123,7 +123,7 @@ export const WebSocketEventProvider = ({ children }) => {
     const loadData = async () => {
       try {
         const response = await axios.get(
-          `${backendConfig.baseURL}${backendConfig.agents}`
+          `${chatConfig.baseURL}${chatConfig.agents}`
         );
         const filteredMembers = response.data.filter(
           (member) => member.user_id !== auth?.userName

@@ -44,7 +44,7 @@ export const backendConfig = {
   getAgentStatus: "/Get-Agent-Status",
 
   // CRITICAL: OLD APP USES THIS
-  agents: "/api/agents",                        // OLD AGENT UI (MUST stay)
+  agents: "/api/agents",
   directorySearch: "/api/directory_search",     // NEW KB + Admin uses this
 
   queueName: "/api/api/queue_tests/1",
@@ -52,6 +52,12 @@ export const backendConfig = {
   callInteractions: "/api/interactions/",
   cdrReports: "http://10.16.7.96:8001/cdr-reports/all",
   port: ":5050",
+};
+
+export const chatConfig = {
+  baseURL: "http://10.16.7.91:8005",
+  agents: "/agents",
+  chatTemplates: "/chat_templates"
 };
 
 export default userConfig;

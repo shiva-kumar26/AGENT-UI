@@ -7,11 +7,12 @@ import { Send, X, FileText, Edit, User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils/utils";
 import { AuthContext } from "@/store/AuthContext";
+import { backendConfig, chatConfig } from "@/config/config";
 import { ChatContext, ChatMessage } from "@/store/ChatContext"; // ✅ Consumption
 import axios from "axios";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-const WS_URL = "ws://10.16.7.91:8000/ws/agent";
+const WS_URL = "ws://10.16.7.91:8082/ws/agent";
 
 // Local interface removed, using imported ChatMessage
 
@@ -47,6 +48,7 @@ export default function StartChatPage() {
   const [newMessage, setNewMessage] = useState("");
   const [isConnected, setIsConnected] = useState(false);
   const [templates, setTemplates] = useState<ChatTemplate[]>([]);
+  const [incomingOffers, setIncomingOffers] = useState<any[]>([]);
 
   // ✅ Fetch Templates
   useEffect(() => {
@@ -112,29 +114,27 @@ export default function StartChatPage() {
         console.log("📩 Received from backend:", data);
 
         // ✅ Handle customer messages (from user endpoint)
-        if (data.userInput || data.metadata || data.message) {
-          const customerMessage = data.userInput || data.message || "";
+        if (data.userInput || data.metadata || data.message || data.initial_message) {
+          const customerMessage = data.userInput || data.message || data.initial_message || "";
 
           // Update customer name and session if available
-          // Extraction priority: data.metadata.name -> data.name -> data.metadata.customer_name
           const incomingName = data.metadata?.name || data.name || data.metadata?.customer_name;
-          if (incomingName) {
-            setCustomerName(incomingName);
-          }
-
           const incomingSessionId = data.metadata?.session_id || data.session_id;
 
           if (incomingSessionId) {
+            // Force session switch if new session detected
             if (activeSessionIdRef.current !== incomingSessionId) {
-              console.log(`📌 Session mismatch: Current[${activeSessionIdRef.current}] vs Incoming[${incomingSessionId}]. Calling setSession.`);
+              console.log(`📌 Switching Session: [${activeSessionIdRef.current}] -> [${incomingSessionId}]`);
               setSession(incomingSessionId, incomingName);
+              // Update ref immediately for this closure
+              activeSessionIdRef.current = incomingSessionId;
+            } else if (incomingName && incomingName !== customerName) {
+              setCustomerName(incomingName);
             }
           }
 
           if (customerMessage.trim()) {
             console.log(`💬 [Session: ${incomingSessionId}] Customer says:`, customerMessage);
-
-            // ✅ Use Context Action
             addMessage({
               from: "customer",
               text: customerMessage,
@@ -155,9 +155,25 @@ export default function StartChatPage() {
           return;
         }
 
-        // ✅ Handle agent registration response
         if (data.type === "agent_registered") {
           console.log("✅ Agent registered successfully:", data);
+          return;
+        }
+
+        // ✅ Handle New Chat Offers
+        if (data.type === "NEW_OFFER") {
+          console.log("🆕 New Offer:", data);
+          setIncomingOffers(prev => {
+            if (prev.find(o => o.session_id === data.session_id)) return prev;
+            return [...prev, data];
+          });
+          return;
+        }
+
+        // ✅ Handle Offer Taken (Remove from list)
+        if (data.type === "OFFER_TAKEN") {
+          console.log("🚫 Offer Taken:", data.session_id);
+          setIncomingOffers(prev => prev.filter(o => o.session_id !== data.session_id));
           return;
         }
 
@@ -166,6 +182,7 @@ export default function StartChatPage() {
         console.error("❌ Error parsing message:", err);
       }
     };
+
 
     socketRef.current.onerror = (err) => {
       console.error("❌ WebSocket error:", err);
@@ -257,6 +274,32 @@ export default function StartChatPage() {
     setNewMessage(messageText);
   };
 
+
+  // ✅ Handle Accept Chat
+  const handleAcceptChat = async (offer: any) => {
+    try {
+      // Optimistic UI update
+      // setIncomingOffers(prev => prev.filter(o => o.session_id !== offer.session_id)); 
+
+      await axios.post(`${chatConfig.baseURL}/accept-chat`, {
+        session_id: offer.session_id,
+        agent_id: auth.userId,
+        agent_name: auth.userName
+      });
+
+      // Success? Switch session
+      setSession(offer.session_id, offer.customer_name);
+
+    } catch (error: any) {
+      console.error("Failed to accept chat:", error);
+      if (error.response && error.response.status === 409) {
+        alert("This chat was just taken by another agent!");
+      } else {
+        alert("Error accepting chat. Please try again.");
+      }
+    }
+  };
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll to bottom when messages change
@@ -341,6 +384,40 @@ export default function StartChatPage() {
             </div>
           </ScrollArea>
         </Card>
+
+        {/* CENTER - QUEUE (Visible if requests exist) */}
+        {incomingOffers.length > 0 && (
+          <Card className="w-80 h-full shadow-sm border border-gray-100 bg-white/80 backdrop-blur-sm flex flex-col ml-4">
+            <div className="h-[72px] px-6 border-b bg-white/50 flex items-center flex-shrink-0 justify-between">
+              <h3 className="font-semibold text-lg flex items-center gap-2 text-gray-700">
+                <User className="w-5 h-5 text-green-600" />
+                Queue
+              </h3>
+              <span className="bg-red-500 text-white text-xs px-2 py-1 rounded-full">{incomingOffers.length}</span>
+            </div>
+            <ScrollArea className="flex-1 p-4 bg-transparent">
+              <div className="space-y-3">
+                {incomingOffers.map((offer) => (
+                  <Card key={offer.session_id} className="shadow-sm border-l-4 border-l-green-500 hover:shadow-md transition-all cursor-pointer">
+                    <CardContent className="p-3">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="font-bold text-gray-800 text-sm">{offer.customer_name || "Unknown"}</div>
+                        <span className="text-[10px] text-gray-400">{new Date(offer.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <p className="text-xs text-gray-600 line-clamp-2 mb-3">{offer.topic || "New connection request..."}</p>
+                      <Button
+                        className="w-full h-8 text-xs bg-green-600 hover:bg-green-700"
+                        onClick={() => handleAcceptChat(offer)}
+                      >
+                        Accept Chat
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </ScrollArea>
+          </Card>
+        )}
 
         {/* RIGHT SIDE - CHAT */}
         <Card className="flex-1 h-full shadow-2xl border-none flex flex-col overflow-hidden relative z-10">
