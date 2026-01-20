@@ -30,6 +30,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/toaster";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -457,6 +458,7 @@ function LayoutContent({ children }: LayoutContentProps) {
 
         <NewCallDialog open={newCallDialogOpen} onOpenChange={setNewCallDialogOpen} />
       </SidebarProvider>
+      <Toaster />
     </TooltipProvider>
   );
 }

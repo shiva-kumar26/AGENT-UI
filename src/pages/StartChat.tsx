@@ -11,6 +11,8 @@ import { backendConfig, chatConfig } from "@/config/config";
 import { ChatContext, ChatMessage } from "@/store/ChatContext"; // ✅ Consumption
 import axios from "axios";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useToast } from "@/hooks/use-toast";
+import { AnimatePresence, motion } from "framer-motion";
 
 const WS_URL = "ws://10.16.7.91:8082/ws/agent";
 
@@ -34,6 +36,7 @@ export default function StartChatPage() {
   if (!chatContext) {
     throw new Error("ChatContext is missing. Ensure ChatProvider is wrapping the app.");
   }
+  const { toast } = useToast();
 
   const {
     chatMessages,
@@ -41,6 +44,7 @@ export default function StartChatPage() {
     customerName,
     addMessage,
     setSession,
+    clearChat,
     setCustomerName
   } = chatContext;
 
@@ -49,6 +53,8 @@ export default function StartChatPage() {
   const [isConnected, setIsConnected] = useState(false);
   const [templates, setTemplates] = useState<ChatTemplate[]>([]);
   const [incomingOffers, setIncomingOffers] = useState<any[]>([]);
+  const [isCustomerTyping, setIsCustomerTyping] = useState(false);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // ✅ Fetch Templates
   useEffect(() => {
@@ -112,33 +118,68 @@ export default function StartChatPage() {
       try {
         const data = JSON.parse(event.data);
         console.log("📩 Received from backend:", data);
+        console.log("🔍 Message checks:", {
+          hasUserInput: !!data.userInput,
+          hasMetadata: !!data.metadata,
+          hasMessage: !!data.message,
+          hasInitialMessage: !!data.initial_message,
+          sender: data.sender,
+          type: data.type
+        });
 
         // ✅ Handle customer messages (from user endpoint)
         if (data.userInput || data.metadata || data.message || data.initial_message) {
           const customerMessage = data.userInput || data.message || data.initial_message || "";
 
-          // Update customer name and session if available
-          const incomingName = data.metadata?.name || data.name || data.metadata?.customer_name;
-          const incomingSessionId = data.metadata?.session_id || data.session_id;
+          // Robust session ID extraction
+          // Check metadata.session_id, then root session_id, then generic metadata check
+          const incomingSessionId =
+            data.metadata?.session_id ||
+            data.session_id ||
+            (typeof data.metadata === 'object' ? (data.metadata as any)?.session_id : undefined);
+
+          const incomingName =
+            data.metadata?.name ||
+            data.name ||
+            data.metadata?.customer_name ||
+            data.customer_name ||
+            "Customer";
+
+          console.log("💬 Processing customer message:", {
+            customerMessage,
+            incomingName,
+            incomingSessionId,
+            currentActiveSession: activeSessionIdRef.current
+          });
 
           if (incomingSessionId) {
-            // Force session switch if new session detected
-            if (activeSessionIdRef.current !== incomingSessionId) {
+            // Force session switch if new session detected OR if currently no session is active
+            if (activeSessionIdRef.current !== incomingSessionId || !activeSessionIdRef.current) {
               console.log(`📌 Switching Session: [${activeSessionIdRef.current}] -> [${incomingSessionId}]`);
+
               setSession(incomingSessionId, incomingName);
+
               // Update ref immediately for this closure
               activeSessionIdRef.current = incomingSessionId;
+
+              // ✅ NEW: Clear any pending offers now that we are busy
+              setIncomingOffers([]);
             } else if (incomingName && incomingName !== customerName) {
               setCustomerName(incomingName);
             }
+          } else {
+            console.warn("⚠️ Received message without Session ID:", data);
           }
 
           if (customerMessage.trim()) {
             console.log(`💬 [Session: ${incomingSessionId}] Customer says:`, customerMessage);
+            console.log("✅ Adding message to chat!");
             addMessage({
               from: "customer",
               text: customerMessage,
             });
+          } else {
+            console.warn("⚠️ Empty customer message, skipping");
           }
           return;
         }
@@ -146,12 +187,33 @@ export default function StartChatPage() {
         // ✅ Handle typing events
         if (data.event === "typing") {
           console.log("🔤 Customer is typing...");
+
+          // Clear any existing timeout
+          if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+          }
+
+          // Show typing indicator
+          setIsCustomerTyping(true);
+
+          // Auto-hide after 3 seconds of no new typing events
+          typingTimeoutRef.current = setTimeout(() => {
+            setIsCustomerTyping(false);
+          }, 3000);
+
           return;
         }
 
         // ✅ Handle stop typing events
         if (data.event === "stop_typing") {
           console.log("🔤 Customer stopped typing");
+
+          // Clear timeout and hide immediately
+          if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+          }
+          setIsCustomerTyping(false);
+
           return;
         }
 
@@ -245,6 +307,44 @@ export default function StartChatPage() {
       .trim();
   }
 
+  const handleEndChat = async () => {
+    if (!activeSessionId) return;
+
+    try {
+      // Call backend to close session and notify others
+      const payload = {
+        session_id: activeSessionId,
+        agent_id: auth?.userId || "unknown",
+        agentName: auth?.userName || "Agent"
+      }
+
+      // Trying both with and without slash is overkill, but sticking to standard.
+      // If previous attempt failed with no-slash, maybe their proxy imposes it?
+      // Let's try to be consistent with other endpoints.
+      await axios.post('http://10.16.7.91:8005/remove-session', payload);
+
+      toast({
+        title: "Chat Ended",
+        description: "Session closed successfully.",
+        variant: "default",
+      });
+
+      clearChat();
+      setCustomerName("Customer");
+
+      // NEW: Refetch waiting chats now that we are available
+      fetchWaitingChats();
+
+    } catch (error) {
+      console.error("Failed to end chat:", error);
+      toast({
+        title: "Error",
+        description: "Failed to end chat session.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleSendTemplate = (template: ChatTemplate) => {
     const content = cleanContent(template.content);
     // Parse if it's JSON string, although the type says string, sometimes it's stringified JSON based on ChatTemplates.tsx
@@ -288,14 +388,30 @@ export default function StartChatPage() {
       });
 
       // Success? Switch session
+      console.log(`📌 handleAcceptChat: Switching to session ${offer.session_id}`);
       setSession(offer.session_id, offer.customer_name);
+
+      // ✅ Update ref immediately to prevent WebSocket race condition
+      // (The WebSocket "History" message might arrive before React updates the state/ref via useEffect)
+      activeSessionIdRef.current = offer.session_id;
+
+      // ✅ NEW: Clear any pending offers now that we are busy
+      setIncomingOffers([]);
 
     } catch (error: any) {
       console.error("Failed to accept chat:", error);
       if (error.response && error.response.status === 409) {
-        alert("This chat was just taken by another agent!");
+        toast({
+          title: "Chat Unavailable",
+          description: "This chat was just taken by another agent!",
+          variant: "destructive",
+        });
       } else {
-        alert("Error accepting chat. Please try again.");
+        toast({
+          title: "Error",
+          description: "Failed to accept chat. Please try again.",
+          variant: "destructive",
+        });
       }
     }
   };
@@ -306,6 +422,37 @@ export default function StartChatPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
+
+  // ✅ NEW: Fetch initial waiting chats
+  const fetchWaitingChats = async () => {
+    try {
+      const response = await axios.get('http://10.16.7.91:8005/waiting-chats');
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        console.log("✅ Found waiting chats:", response.data);
+
+        // Always update incomingOffers with pending chats
+        // This ensures that after ending a chat, the agent sees any waiting requests
+        setIncomingOffers(response.data.map((chat: any) => ({
+          type: "NEW_OFFER",
+          session_id: chat.session_id,
+          customer_name: chat.customer_name,
+          topic: chat.topic,
+          timestamp: chat.timestamp
+        })));
+
+        console.log(`✅ Refreshed ${response.data.length} pending offer(s)`);
+      } else {
+        console.log("No waiting chats found");
+        setIncomingOffers([]);
+      }
+    } catch (e) {
+      console.error("Failed to fetch waiting chats:", e);
+    }
+  };
+
+  useEffect(() => {
+    fetchWaitingChats();
+  }, [activeSessionId]); // Refetch when we become available? No, usually just on mount or explicit end.
 
   if (!auth?.isAuthenticated) {
     return (
@@ -387,46 +534,57 @@ export default function StartChatPage() {
 
         {/* FLOATING NOTIFICATION STACK (Replacing Queue Column) */}
         <div className="fixed top-4 right-4 z-50 w-96 flex flex-col gap-2 pointer-events-none">
-          {incomingOffers.map((offer) => (
-            <Card key={offer.session_id} className="shadow-lg border-l-4 border-l-green-500 bg-white pointer-events-auto animate-in slide-in-from-right-full duration-300">
-              <CardContent className="p-3">
-                <div className="flex justify-between items-start mb-1">
-                  <div className="flex items-center gap-2">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                    </span>
-                    <div className="font-bold text-gray-800 text-sm">{offer.customer_name || "Unknown"}</div>
-                  </div>
-                  <span className="text-[10px] text-gray-400 bg-gray-50 px-1 rounded">
-                    {new Date(offer.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
+          <AnimatePresence>
+            {incomingOffers.map((offer) => (
+              <motion.div
+                key={offer.session_id}
+                initial={{ opacity: 0, x: 100 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 300, scale: 0.95 }}
+                transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                className="pointer-events-auto"
+              >
+                <Card className="shadow-lg border-l-4 border-l-green-500 bg-white">
+                  <CardContent className="p-3">
+                    <div className="flex justify-between items-start mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                        </span>
+                        <div className="font-bold text-gray-800 text-sm">{offer.customer_name || "Unknown"}</div>
+                      </div>
+                      <span className="text-[10px] text-gray-400 bg-gray-50 px-1 rounded">
+                        {new Date(offer.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
 
-                <p className="text-xs text-gray-600 line-clamp-2 mb-2 pl-4 border-l-2 border-gray-100 italic">
-                  "{offer.topic || "New connection request..."}"
-                </p>
+                    <p className="text-xs text-gray-600 line-clamp-2 mb-2 pl-4 border-l-2 border-gray-100 italic">
+                      "{offer.topic || "New connection request..."}"
+                    </p>
 
-                <div className="flex gap-2 mt-2">
-                  <Button
-                    size="sm"
-                    className="flex-1 h-7 text-xs bg-green-600 hover:bg-green-700 shadow-sm"
-                    onClick={() => handleAcceptChat(offer)}
-                  >
-                    Accept
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 w-7 p-0 text-gray-400 hover:text-red-500 border-dashed"
-                    onClick={() => setIncomingOffers(prev => prev.filter(o => o.session_id !== offer.session_id))}
-                  >
-                    <X className="w-3 h-3" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                    <div className="flex gap-2 mt-2">
+                      <Button
+                        size="sm"
+                        className="flex-1 h-7 text-xs bg-green-600 hover:bg-green-700 shadow-sm"
+                        onClick={() => handleAcceptChat(offer)}
+                      >
+                        Accept
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 w-7 p-0 text-gray-400 hover:text-red-500 border-dashed"
+                        onClick={() => setIncomingOffers(prev => prev.filter(o => o.session_id !== offer.session_id))}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </div>
 
         {/* RIGHT SIDE - CHAT */}
@@ -448,14 +606,25 @@ export default function StartChatPage() {
                 </div>
               </div>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-              onClick={() => navigate(createPageUrl("Dashboard"))}
-            >
-              <X className="w-5 h-5" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="destructive"
+                size="sm"
+                className="bg-red-500 hover:bg-red-600 shadow-sm"
+                onClick={handleEndChat}
+                disabled={!activeSessionId}
+              >
+                End Chat
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                onClick={() => navigate(createPageUrl("Dashboard"))}
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
           </div>
 
           {/* MESSAGES */}
@@ -501,6 +670,26 @@ export default function StartChatPage() {
                     </div>
                   </div>
                 ))}
+
+                {/* ✅ Typing Indicator */}
+                {isCustomerTyping && (
+                  <div className="flex gap-3 justify-start">
+                    <Avatar className="h-8 w-8 mt-1">
+                      <AvatarImage src={`https://ui-avatars.com/api/?name=${customerName}&background=0D8ABC&color=fff`} />
+                      <AvatarFallback className="bg-blue-600 text-white text-[10px] font-bold">{getInitials(customerName)}</AvatarFallback>
+                    </Avatar>
+                    <div className="flex flex-col items-start">
+                      <div className="rounded-2xl px-5 py-3 bg-blue-50 border border-blue-100 rounded-tl-sm">
+                        <div className="flex gap-1 items-center">
+                          <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                          <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                          <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                        </div>
+                      </div>
+                      <span className="text-[10px] text-gray-400 mt-1 px-1 italic">typing...</span>
+                    </div>
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </>
             )}

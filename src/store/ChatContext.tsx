@@ -50,9 +50,25 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   }, [setChatMessages]);
 
   const setSession = useCallback((sessionId: string, name?: string) => {
-    console.log("🧹 ChatContext: Clearing messages for new session:", sessionId);
-    setChatMessages([]);
-    setActiveSessionId(sessionId);
+    // Use setState callback to get the CURRENT activeSessionId without closure staleness
+    let shouldClear = true;
+
+    setActiveSessionId((currentSessionId) => {
+      if (sessionId === currentSessionId) {
+        console.log("⚠️ ChatContext: setSession called with same ID, skipping clear:", sessionId);
+        shouldClear = false;
+        return currentSessionId; // No change
+      }
+
+      console.log("🧹 ChatContext: Clearing messages for new session:", sessionId);
+      return sessionId; // Update to new session
+    });
+
+    // Only clear if we actually switched sessions
+    if (shouldClear) {
+      setChatMessages([]);
+    }
+
     if (name) {
       setCustomerNameState(name);
     }
